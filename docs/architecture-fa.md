@@ -1,4 +1,6 @@
-# معماری Pathfinder — نسخه‌ی MVP
+# معماری Pathfinder — prototype قبلی
+
+> سند تاریخی معماری کاتالوگ دانشگاهی است. معماری Agent فعلی در سند [پروژه‌ی آموزشی Agent](agent-capstone-fa.md) و کد `local_research_agent/` قرار دارد.
 
 ## هدف معماری
 

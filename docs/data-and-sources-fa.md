@@ -1,4 +1,6 @@
-# داده‌ها و منابع رسمی Pathfinder
+# داده‌ها و منابع رسمی Pathfinder — prototype قبلی
+
+> این snapshot فقط برای prototype قبلیِ Pathfinder نگه داشته شده است و هدف فعلی آموزش/ساخت Agent نیست.
 
 ## وضعیت snapshot
 
