@@ -1,0 +1,33 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Python environments and bytecode
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Test/tool caches
+*.tsbuildinfo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local databases and vector-store data
+*.sqlite3
+*.db
+chroma_db/
+data/local/
+
+# Frontend dependencies and generated assets
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# OS/editor files
+.DS_Store

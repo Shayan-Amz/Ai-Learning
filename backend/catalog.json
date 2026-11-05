@@ -1,0 +1,262 @@
+{
+  "catalog_checked_at": "2026-11-05",
+  "programs": [
+    {
+      "id": "utoronto-mscac-ai",
+      "institution": "University of Toronto",
+      "institution_short": "U of T",
+      "name": "Master of Science in Applied Computing",
+      "concentration": "Artificial Intelligence",
+      "credential": "MScAC",
+      "program_type": "professional",
+      "city": "Toronto",
+      "province": "Ontario",
+      "duration": null,
+      "delivery": null,
+      "summary": "A professional applied-computing master's with a dedicated Artificial Intelligence concentration.",
+      "fields": ["Artificial Intelligence", "Applied Computing", "Computer Science"],
+      "tags": ["AI", "professional master's", "applied computing"],
+      "checked_at": "2026-11-05",
+      "facts": [
+        {
+          "id": "deadline",
+          "label": "Application deadline",
+          "value": "December 1, 2026 at 11:59 p.m. ET",
+          "status": "verified",
+          "source_id": "uoft-mscac-apply",
+          "valid_for": "Fall 2027 intake",
+          "note": "The official program page states this deadline for Fall 2027 applications."
+        },
+        {
+          "id": "academic-standing",
+          "label": "Academic standing",
+          "value": "At least B+ (U of T 77–79%) in the final year of undergraduate study",
+          "status": "verified",
+          "source_id": "uoft-mscac-apply",
+          "valid_for": "General entry requirements",
+          "note": "Concentration-specific prerequisites also apply; meeting minimums does not guarantee admission."
+        },
+        {
+          "id": "concentration-prerequisites",
+          "label": "AI concentration prerequisites",
+          "value": "Relevant exposure in computer science, statistics, or engineering, including calculus, linear algebra, probability/statistics, and programming",
+          "status": "verified",
+          "source_id": "uoft-mscac-apply",
+          "valid_for": "Artificial Intelligence concentration",
+          "note": "The concentration must be selected in the application and is evaluated competitively and separately."
+        },
+        {
+          "id": "references",
+          "label": "References",
+          "value": "Three referees; ideally at least two academic references",
+          "status": "verified",
+          "source_id": "uoft-mscac-apply",
+          "valid_for": "Current application instructions",
+          "note": null
+        },
+        {
+          "id": "experience",
+          "label": "Work or research experience",
+          "value": "Preferred, but not required",
+          "status": "verified",
+          "source_id": "uoft-mscac-apply",
+          "valid_for": "Current application instructions",
+          "note": null
+        },
+        {
+          "id": "tuition",
+          "label": "Tuition",
+          "value": null,
+          "status": "not_collected",
+          "source_id": null,
+          "valid_for": null,
+          "note": "Not captured in this starter dataset; confirm on the official program fee page."
+        }
+      ],
+      "sources": [
+        {
+          "id": "uoft-mscac-apply",
+          "title": "Application Process",
+          "publisher": "MScAC Program, Department of Computer Science, University of Toronto",
+          "url": "https://mscac.utoronto.ca/apply/",
+          "checked_at": "2026-11-05",
+          "kind": "program_page"
+        }
+      ]
+    },
+    {
+      "id": "uwaterloo-mmath-cs",
+      "institution": "University of Waterloo",
+      "institution_short": "Waterloo",
+      "name": "Computer Science — Master of Mathematics",
+      "concentration": "Research in Computer Science, including AI and Machine Learning",
+      "credential": "MMath",
+      "program_type": "research",
+      "city": "Waterloo",
+      "province": "Ontario",
+      "duration": "24 months full-time",
+      "delivery": "On campus",
+      "summary": "A research master's with thesis admission and research areas that include Artificial Intelligence and Machine Learning.",
+      "fields": ["Computer Science", "Artificial Intelligence", "Machine Learning", "Research"],
+      "tags": ["research master's", "thesis", "AI/ML"],
+      "checked_at": "2026-11-05",
+      "facts": [
+        {
+          "id": "deadline",
+          "label": "Application deadline",
+          "value": "December 1, 2026",
+          "status": "verified",
+          "source_id": "waterloo-mmath-program",
+          "valid_for": "September 2027 intake",
+          "note": "The page lists December 1 for September admission in the following year."
+        },
+        {
+          "id": "duration",
+          "label": "Program duration",
+          "value": "24 months full-time",
+          "status": "verified",
+          "source_id": "waterloo-mmath-program",
+          "valid_for": "Full-time program length",
+          "note": null
+        },
+        {
+          "id": "delivery",
+          "label": "Delivery format",
+          "value": "On campus",
+          "status": "verified",
+          "source_id": "waterloo-mmath-program",
+          "valid_for": "Published program format",
+          "note": null
+        },
+        {
+          "id": "academic-standing",
+          "label": "Academic standing",
+          "value": "Honours bachelor's in Computer Science or Engineering (or equivalent) with at least 78% standing",
+          "status": "verified",
+          "source_id": "waterloo-mmath-program",
+          "valid_for": "Published admission requirements",
+          "note": "Admission remains competitive; this is the stated minimum."
+        },
+        {
+          "id": "admission-option",
+          "label": "Admission option",
+          "value": "Admission is available to the thesis option",
+          "status": "verified",
+          "source_id": "waterloo-mmath-program",
+          "valid_for": "Published program overview",
+          "note": null
+        },
+        {
+          "id": "references",
+          "label": "References",
+          "value": "Three references are required; at least two must be academic",
+          "status": "verified",
+          "source_id": "waterloo-mmath-program",
+          "valid_for": "Current application materials",
+          "note": null
+        },
+        {
+          "id": "tuition",
+          "label": "Tuition",
+          "value": null,
+          "status": "not_collected",
+          "source_id": null,
+          "valid_for": null,
+          "note": "Not captured in this starter dataset; confirm on the official fee page."
+        }
+      ],
+      "sources": [
+        {
+          "id": "waterloo-mmath-program",
+          "title": "Computer Science — Master of Math (MMath)",
+          "publisher": "Future Graduate Students, University of Waterloo",
+          "url": "https://uwaterloo.ca/future-graduate-students/programs/by-faculty/math/computer-science-master-math-mmath",
+          "checked_at": "2026-11-05",
+          "kind": "program_page"
+        }
+      ]
+    },
+    {
+      "id": "ubc-msc-cs",
+      "institution": "The University of British Columbia",
+      "institution_short": "UBC",
+      "name": "Master of Science in Computer Science",
+      "concentration": "Research-based MSc",
+      "credential": "MSc",
+      "program_type": "research",
+      "city": "Vancouver",
+      "province": "British Columbia",
+      "duration": "2 years; about 16 months of full-time research work",
+      "delivery": null,
+      "summary": "A research-based Computer Science MSc; the department lists Artificial Intelligence and Machine Learning among its research strengths.",
+      "fields": ["Computer Science", "Artificial Intelligence", "Machine Learning", "Research"],
+      "tags": ["research master's", "fully funded statement on department page", "AI/ML"],
+      "checked_at": "2026-11-05",
+      "facts": [
+        {
+          "id": "deadline",
+          "label": "Application deadline",
+          "value": "December 15, 2026",
+          "status": "verified",
+          "source_id": "ubc-cs-admissions",
+          "valid_for": "Programs beginning September 2027 or January 2028",
+          "note": "Verify the intended start term on the current official page before applying."
+        },
+        {
+          "id": "duration",
+          "label": "Program duration",
+          "value": "2 years; about 16 months of full-time research work",
+          "status": "verified",
+          "source_id": "ubc-cs-admissions",
+          "valid_for": "Research-based MSc overview",
+          "note": null
+        },
+        {
+          "id": "eligibility",
+          "label": "Academic background",
+          "value": "Most applicants hold a degree academically equivalent to a four-year UBC bachelor's degree in Computer Science; country-specific grade requirements apply",
+          "status": "verified",
+          "source_id": "ubc-cs-eligibility",
+          "valid_for": "Published minimum eligibility guidance",
+          "note": "The department states that meeting minimum requirements is not sufficient for admission."
+        },
+        {
+          "id": "funding",
+          "label": "Funding statement",
+          "value": "The department page states that its research MSc, PhD, and PhD Track programs are fully funded",
+          "status": "verified",
+          "source_id": "ubc-cs-admissions",
+          "valid_for": "Statement on the department admissions page",
+          "note": "Funding package, eligibility, and conditions must be confirmed directly with the university."
+        },
+        {
+          "id": "tuition",
+          "label": "Tuition",
+          "value": null,
+          "status": "not_collected",
+          "source_id": null,
+          "valid_for": null,
+          "note": "Not captured in this starter dataset; confirm on the official fee page."
+        }
+      ],
+      "sources": [
+        {
+          "id": "ubc-cs-admissions",
+          "title": "Admissions — Computer Science Graduate Programs",
+          "publisher": "Department of Computer Science, The University of British Columbia",
+          "url": "https://www.cs.ubc.ca/students/grad/admissions",
+          "checked_at": "2026-11-05",
+          "kind": "department_page"
+        },
+        {
+          "id": "ubc-cs-eligibility",
+          "title": "Eligibility — Computer Science Graduate Programs",
+          "publisher": "Department of Computer Science, The University of British Columbia",
+          "url": "https://www.cs.ubc.ca/students/grad/admissions/eligibility",
+          "checked_at": "2026-11-05",
+          "kind": "eligibility_page"
+        }
+      ]
+    }
+  ]
+}
