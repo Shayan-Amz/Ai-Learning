@@ -22,4 +22,25 @@ jobs:
           cache-dependency-path: requirements-dev.txt
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m ruff check local_research_agent tests
-      - run: python -m pytest --cov=local_research_agent --cov-report=term-missing
+      - name: Run tests
+        run: |
+          set +e
+          python -m pytest --cov=local_research_agent --cov-report=term-missing --junitxml=pytest-results.xml
+          test_status=$?
+          if [ -f pytest-results.xml ]; then
+            python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("pytest-results.xml").getroot()
+          for case in root.iter("testcase"):
+              for outcome in ("failure", "error"):
+                  detail = case.find(outcome)
+                  if detail is None:
+                      continue
+                  name = f"{case.get('classname', '')}::{case.get('name', 'unknown')}"
+                  message = detail.get("message", "") + "\n" + (detail.text or "")
+                  message = message[:4000].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                  print(f"::error title=Pytest {outcome}: {name}::{message}")
+          PY
+          fi
+          exit "$test_status"
