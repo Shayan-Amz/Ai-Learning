@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import math
 import re
 from collections import Counter
@@ -247,6 +248,14 @@ def _read_document(root: Path, arguments: dict[str, object]) -> dict[str, object
         raise ToolError("Hidden documents are not available to the research tools.")
     if safe_path.suffix.casefold() not in _ALLOWED_SUFFIXES:
         raise ToolError("Only Markdown and plain-text documents can be read.")
+    try:
+        safe_path.stat()
+    except OSError as error:
+        if error.errno == getattr(errno, "ELOOP", -1):
+            raise ToolError("Could not resolve document path inside the approved folder.") from error
+        if error.errno in {errno.ENOENT, errno.ENOTDIR}:
+            raise ToolError("Document does not exist.") from error
+        raise ToolError("Could not read a local text document.") from error
     if not safe_path.is_file():
         raise ToolError("Document does not exist.")
 
