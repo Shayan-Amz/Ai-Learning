@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f5f7fb" />
+    <meta
+      name="description"
+      content="A local-first research agent that answers from selected documents with verifiable file and line citations."
+    />
+    <title>Local Research Agent</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Local Research Agent home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path d="M7 6.5A2.5 2.5 0 0 1 9.5 4H25v21H9.5A2.5 2.5 0 0 0 7 27.5v-21Z" stroke="currentColor" stroke-width="1.8" />
+              <path d="M7 8h15M12 13h8M12 17h6M7 27.5A2.5 2.5 0 0 1 9.5 25H25" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+              <circle cx="23.5" cy="22.5" r="4.5" fill="#E5FAF4" stroke="currentColor" stroke-width="1.6" />
+              <path d="m27 26 2 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+          </span>
+          <span class="brand-copy">
+            <strong>LOCAL RESEARCH</strong>
+            <span>AGENT</span>
+          </span>
+        </a>
+        <div class="topbar-meta">
+          <div class="privacy-badge"><span class="status-dot"></span><span id="privacy-label">Local data only</span></div>
+          <span id="model-badge" class="model-badge" aria-live="polite">Connecting…</span>
+        </div>
+      </header>
+
+      <main class="workspace-grid">
+        <aside class="library-panel" aria-label="Selected documents">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">YOUR KNOWLEDGE</p>
+              <h1>Document library</h1>
+            </div>
+            <span id="document-count" class="count-badge">0</span>
+          </div>
+          <p class="panel-intro">Only files you add here are available to the research tools.</p>
+
+          <button id="upload-trigger" class="upload-zone" type="button">
+            <span class="upload-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14.5v3A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </span>
+            <strong>Add documents</strong>
+            <span>Choose .md or .txt files</span>
+            <small>Up to 10 files · 5 MiB each</small>
+          </button>
+          <input id="file-input" class="visually-hidden" type="file" accept=".md,.txt,text/plain,text/markdown" multiple />
+
+          <div class="library-list-heading">
+            <span>IN THIS WORKSPACE</span>
+            <button id="refresh-documents" class="icon-text-button" type="button" title="Refresh document list">
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M16.2 8A6.5 6.5 0 0 0 5 5.1L3.8 6.5M3.8 6.5V3.7m0 2.8h2.8m-2.8 3.5a6.5 6.5 0 0 0 11.2 2.9l1.2-1.4m0 0v2.8m0-2.8h-2.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              Refresh
+            </button>
+          </div>
+          <div id="document-list" class="document-list" aria-live="polite">
+            <div class="list-loading">Loading documents…</div>
+          </div>
+
+          <div class="library-footnote">
+            <span class="footnote-icon" aria-hidden="true">i</span>
+            <p><strong>Read-only research.</strong> The agent cannot edit or execute files. Removing a document requires an explicit UI action.</p>
+          </div>
+        </aside>
+
+        <section class="research-panel" aria-label="Research assistant">
+          <div class="research-heading">
+            <div>
+              <p class="eyebrow">PRIVATE BY DESIGN · SOURCE FIRST</p>
+              <h2>Ask your documents.</h2>
+              <p class="research-subtitle">Get a focused answer, then check the exact lines it came from.</p>
+            </div>
+            <button id="clear-chat" class="subtle-button" type="button">New research</button>
+          </div>
+
+          <div id="remote-notice" class="remote-notice" hidden>
+            <span class="notice-icon" aria-hidden="true">!</span>
+            <p><strong>Remote model configured.</strong> Your question and retrieved passages can be sent to that provider. Each request requires your explicit consent below.</p>
+          </div>
+
+          <div id="conversation" class="conversation" role="log" aria-live="polite" aria-relevant="additions text">
+            <div id="welcome-state" class="welcome-state">
+              <div class="welcome-orbit" aria-hidden="true">
+                <span class="orbit-dot dot-one"></span><span class="orbit-dot dot-two"></span>
+                <span class="welcome-symbol">
+                  <svg viewBox="0 0 48 48" fill="none"><path d="M10 9a4 4 0 0 1 4-4h23v31H14a4 4 0 0 0-4 4V9Z" stroke="currentColor" stroke-width="2"/><path d="M10 12h21M17 19h11M17 24h8M10 40a4 4 0 0 1 4-4h23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="36" cy="35" r="7" fill="#E7F7F2" stroke="currentColor" stroke-width="2"/><path d="m41 40 3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                </span>
+              </div>
+              <p class="eyebrow">READY WHEN YOU ARE</p>
+              <h3>Your documents, with receipts.</h3>
+              <p class="welcome-copy">Ask a question about the files in your library. The offline mode retrieves evidence directly; an optional configured model can synthesize an answer with citations.</p>
+              <div class="suggestion-label">TRY A QUESTION</div>
+              <div class="suggestions">
+                <button class="suggestion-chip" type="button" data-question="What does the local note say about human approval?">What needs human approval?</button>
+                <button class="suggestion-chip" type="button" data-question="Summarize the key safety rules in my notes.">Summarize the safety rules</button>
+                <button class="suggestion-chip" type="button" data-question="Which documents describe read-only tools?">Find read-only tool guidance</button>
+              </div>
+            </div>
+            <div id="message-list" class="message-list"></div>
+          </div>
+
+          <form id="ask-form" class="composer">
+            <label class="composer-label" for="question-input">YOUR QUESTION</label>
+            <div class="composer-box">
+              <textarea id="question-input" name="question" rows="2" maxlength="1000" placeholder="Ask something you want to verify in your documents…" required></textarea>
+              <div class="composer-actions">
+                <span id="character-count" class="character-count">0 / 1000</span>
+                <button id="send-button" class="send-button" type="submit">
+                  <span>Research</span>
+                  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 10h11m0 0-4.5-4.5M15 10l-4.5 4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                </button>
+              </div>
+            </div>
+            <div class="composer-footer">
+              <label id="remote-consent-control" class="consent-control" hidden>
+                <input id="remote-consent" type="checkbox" />
+                <span>I allow this question and retrieved passages to be processed by the configured remote model.</span>
+              </label>
+              <p>Answers use only this selected library. No chat history is saved by the app.</p>
+            </div>
+          </form>
+        </section>
+      </main>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    </div>
+  </body>
+</html>

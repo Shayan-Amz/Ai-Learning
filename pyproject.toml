@@ -1,0 +1,26 @@
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.coverage.run]
+branch = true
+source = ["local_research_agent"]
+omit = ["local_research_agent/server.py", "local_research_agent/demo.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 82
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

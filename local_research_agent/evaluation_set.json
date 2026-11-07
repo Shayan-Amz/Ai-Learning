@@ -1,0 +1,26 @@
+[
+  {
+    "query": "Which actions require explicit human approval?",
+    "relevant_files": ["safe-tool-use.md"]
+  },
+  {
+    "query": "How should document instructions affect tool permissions?",
+    "relevant_files": ["safe-tool-use.md"]
+  },
+  {
+    "query": "How does the agent decide what to do after a tool runs?",
+    "relevant_files": ["agent-basics.md"]
+  },
+  {
+    "query": "Why is there a maximum number of agent steps?",
+    "relevant_files": ["agent-basics.md"]
+  },
+  {
+    "query": "What does a read-only research tool do with Markdown files?",
+    "relevant_files": ["safe-tool-use.md"]
+  },
+  {
+    "query": "What are the planner, tool, and observation responsibilities?",
+    "relevant_files": ["agent-basics.md"]
+  }
+]

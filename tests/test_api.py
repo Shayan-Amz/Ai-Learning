@@ -6,7 +6,6 @@ from backend.catalog import load_catalog
 from backend.main import app
 from backend.models import Program
 
-
 client = TestClient(app)
 
 

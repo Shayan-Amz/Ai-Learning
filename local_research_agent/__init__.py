@@ -1,17 +1,3 @@
-from .core import (
-    AgentResult,
-    FinalAnswer,
-    Observation,
-    ResearchAgent,
-    ToolCall,
-    ToolRegistry,
-)
+"""Local-first research agent with an allow-listed, read-only tool loop."""
 
-__all__ = [
-    "AgentResult",
-    "FinalAnswer",
-    "Observation",
-    "ResearchAgent",
-    "ToolCall",
-    "ToolRegistry",
-]
+__version__ = "1.0.0"

@@ -1,56 +1,113 @@
-# AI Learning — ساخت Agent پژوهشگر فایل‌های محلی
+# Local Research Agent
 
-هدف این ریپو این است که **مرحله‌به‌مرحله یک Agent ابزارمحور بسازیم و منطقش را یاد بگیریم**؛ نه اینکه فقط یک برنامه‌ی فهرست‌محور یا chatbot بسازیم.
+A local-first research agent that searches only the text documents you explicitly add, reads bounded passages, and returns answers with verifiable file-and-line citations. It is designed as a small, inspectable agent system—not a black-box chatbot.
 
-## پروژه‌ی فعلی: Local Research Agent
+> **Default mode is offline.** No model key, cloud account, or network connection is required to run the app. An optional OpenAI-compatible planner can use a local Ollama model or a remote provider; remote processing is disabled per request unless the user explicitly consents in the UI.
 
-Agent آزمایشی، از یک پوشه‌ی محدود از فایل‌های Markdown جست‌وجو می‌کند، سندی را که ابزار پیدا کرده می‌خواند و پاسخ را با مسیر فایل و شماره‌ی خط برمی‌گرداند. ابزارها فقط خواندنی هستند؛ shell، شبکه، نوشتن فایل و دسترسی به پوشه‌های دیگر ثبت نشده‌اند.
+## What it does
 
-**شفافیت مهم:** planner فعلی `DemoPlanner` و قاعده‌محور است؛ هنوز LLM و انتخاب ابزار آزاد/هوشمند وصل نشده‌اند. این قدم عمداً برای فهمیدن چرخه‌ی اصلی Agent است: هدف → انتخاب action → اجرای ابزار مجاز → مشاهده‌ی نتیجه → ادامه یا پایان. قدم بعدی جایگزین‌کردن planner آزمایشی با planner مبتنی بر مدل خواهد بود.
+- **Explicit document selection:** upload `.md` and `.txt` files in the browser; the app does not crawl your home folder or follow links to arbitrary locations.
+- **Ranked local retrieval:** uses a small BM25-style lexical ranker over bounded text chunks and preserves original line ranges.
+- **Agent loop:** goal → planner action → allow-listed tool → observation → next action or finish, with a configurable hard step limit.
+- **Evidence-grounded output:** read results are shown as citations; the agent rejects citations that do not match passages it actually read. The offline planner returns retrieved evidence instead of inventing a summary.
+- **Optional tool-calling model:** an OpenAI-compatible chat-completions endpoint may choose `search_documents`, `read_document`, and `finish`. The registry still refuses every unregistered tool.
+- **Privacy-aware model use:** Ollama on loopback is classified as local. A remote HTTPS model needs a per-question consent checkbox; only the question and retrieved excerpts are sent.
+- **Read-only agent permissions:** the agent has no shell, filesystem-write, delete, email, payment, or general network tool. Adding/removing documents is a separate, explicit UI operation; removing one requires confirmation.
+- **Safe-by-default workspace:** selected documents are stored in the ignored `.local_data/` directory. Chat messages are not persisted by the app, and secrets belong in ignored `.env` files.
+- **Retrieval evaluation:** a small, checked-in query set reports Hit@k and MRR so retrieval changes can be measured rather than guessed.
 
-هیچ API key یا درخواست اینترنتی برای اجرای Agent فعلی لازم نیست. کد Agent از کتابخانه‌ی استاندارد Python استفاده می‌کند؛ فقط تست‌ها به pytest نیاز دارند.
+## Windows quick start (PowerShell)
 
-## اجرا در Windows PowerShell
-
-این فرمان‌ها را از ریشه‌ی ریپو اجرا کن:
-
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements-agent.txt
-python -m local_research_agent.demo
-```
-
-- `py -m venv .venv` یک محیط Python جدا می‌سازد تا ابزار تست پروژه با Python سراسری قاطی نشود.
-- `Activate.ps1` همان محیط را در پنجره‌ی PowerShell فعلی فعال می‌کند.
-- `python -m pip install -r requirements-agent.txt` فقط pytest را برای اجرای تست‌ها نصب می‌کند؛ خود Agent وابستگی بیرونی ندارد.
-- `python -m local_research_agent.demo` دموی Agent را از پوشه‌ی نمونه‌ی `local_research_agent/knowledge/` اجرا می‌کند.
-
-اگر فقط می‌خواهی demo را ببینی و Python آماده داری، نصب pytest برای اجرای demo لازم نیست؛ فقط فرمان چهارم را اجرا کن. اگر فعال‌سازی محیط در PowerShell مسدود شد، راهنمای موقت و توضیحش در سند [Lesson 16](docs/lesson-16-agent-loop-fa.md) آمده است.
-
-## تست‌ها
+Open PowerShell in the repository root (the folder containing `README.md`). These commands use a project-local virtual environment and do not change your global Python installation:
 
 ```powershell
-python -m pytest -q
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m local_research_agent.server
 ```
 
-این فرمان مسیر جست‌وجو و خواندن سند، citation فایل/خط، ردکردن مسیر خارج از پوشه‌ی مجاز، ردکردن ابزار ثبت‌نشده، توقف بعد از سقف step و ردکردن goal خالی را بررسی می‌کند.
+- `py -3 -m venv .venv` creates an isolated Python environment in `.venv`.
+- The second line installs the app's runtime packages into that environment.
+- The third line starts the local web app; by default it listens only on `127.0.0.1:8000`.
 
-## یادگیری مرحله‌ای
+Open **http://127.0.0.1:8000**. The first run copies two small, public sample notes into `.local_data/knowledge/` so the app is immediately usable. Add your own `.md` or `.txt` files with **Add documents**. They remain in your local workspace until you remove them in the app or delete that workspace yourself.
 
-1. [Lesson 16 — چرخه‌ی Agent](docs/lesson-16-agent-loop-fa.md): مدل ذهنی و توضیح خط‌به‌خط core/planner.
-2. [Lesson 17 — ابزارهای read-only](docs/lesson-17-read-only-tools-fa.md): جست‌وجو، citation و sandbox مسیرها.
-3. [Lesson 18 — demo و تست‌ها](docs/lesson-18-demo-and-tests-fa.md): اجرای کامل و توضیح سناریوهای آزمون.
-4. [مشخصات پروژه‌ی آموزشی Agent](docs/agent-capstone-fa.md): دامنه، مرزهای ایمنی و مراحل بعد.
-3. درس‌های ۰ تا ۱۵، [نقشه‌راه](docs/roadmap-fa.md) و درس‌های قبلی Git/API/LLM/RAG حفظ شده‌اند؛ پروژه‌ی Pathfinder در بخش بعدی به‌عنوان نمونه‌ی قبلی معرفی شده، نه هدف فعلی.
+If the `py` launcher is not installed, use `python -m venv .venv` in its place. If port `8000` is occupied, set `LOCAL_RESEARCH_PORT` in `.env` before starting the server.
 
-### مراحل بعدی Agent
+## Optional model setup
 
-- جایگزین‌کردن `DemoPlanner` با planner مبتنی بر LLM و خروجی tool-call ساخت‌یافته.
-- تست تصمیم‌های مدل: ابزار مجاز، ورودی نامعتبر، ابزار ناشناخته، پایان درست و سقف step.
-- افزودن trace خوانا و پاسخ نهایی که ادعاهایش به سند/خط وصل باشد.
-- اگر بعداً نوشتن یا اقدام بیرونی اضافه شد، تأیید صریح انسان قبل از اجرا.
+The app works without a model. To enable structured tool calling with a local Ollama model, start Ollama, download a model that supports tool calling, then create a local `.env` from the example:
 
-## نمونه‌ی قبلی Pathfinder
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
 
-در مسیر `backend/` و `frontend/` یک prototype قدیمی برای مقایسه‌ی برنامه‌های دانشگاهی کانادا باقی مانده است. این prototype **Agent نیست و هدف آموزشی فعلی هم نیست**؛ نگه‌داری شده تا کار قبلی از بین نرود. در حال حاضر سرویس‌های آن اجرا نمی‌شوند و توسعه روی Local Research Agent متمرکز است.
+- `Copy-Item` creates a private local settings file; `.env` is ignored by Git.
+- `notepad .env` opens it so you can set the base URL and model name. For Ollama's OpenAI-compatible endpoint, the settings look like this:
+
+```text
+LOCAL_RESEARCH_LLM_BASE_URL=http://127.0.0.1:11434/v1
+LOCAL_RESEARCH_LLM_MODEL=your-tool-capable-ollama-model
+```
+
+Restart the app after editing `.env`. A loopback model runs locally. For a remote provider, use its HTTPS base URL and set `LOCAL_RESEARCH_LLM_API_KEY` in `.env`; never commit or share that file. The UI will disclose remote processing and requires you to check a consent box for each question. The provider receives your question and the passages the agent retrieved, not the whole library.
+
+## Tests and retrieval evaluation
+
+Install the development tools once, then run the full suite and the retrieval evaluation:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m ruff check local_research_agent tests
+.\.venv\Scripts\python.exe -m pytest --cov=local_research_agent --cov-report=term-missing
+.\.venv\Scripts\python.exe -m local_research_agent.evaluate --k 5
+```
+
+The test suite covers the agent loop, ranked search, source-line integrity, traversal and symlink boundaries, upload validation, state-changing request protection, model consent, tool-calling response parsing, and safe stopping. The evaluation set is deliberately small and transparent; it is a regression check, not a claim of general retrieval quality.
+
+## Architecture
+
+```text
+Browser UI (same origin)
+  ├─ explicit upload/list/remove actions ──> FastAPI document workspace (.local_data/knowledge)
+  └─ question + optional consent ─────────> ResearchAgent
+                                               ├─ Planner: offline evidence mode or OpenAI-compatible tool caller
+                                               ├─ ToolRegistry: search_documents, read_document only
+                                               └─ Observations → citation validation → answer + trace
+```
+
+| Area | Files | Responsibility |
+|---|---|---|
+| Agent contracts and loop | `local_research_agent/core.py` | Actions, observations, bounded steps, search-before-read policy, citation verification |
+| Retrieval and file safety | `local_research_agent/tools.py` | Ranked search, UTF-8/size limits, line-preserving reads, path/symlink checks |
+| Planners | `local_research_agent/planner.py` | Offline extractive planning and structured OpenAI-compatible tool calls |
+| Web API and configuration | `local_research_agent/api.py`, `config.py`, `server.py` | FastAPI endpoints, local workspace, privacy consent, local server settings |
+| User interface | `local_research_agent/static/` | Responsive document library, research view, citations, and tool trace |
+| Tests/evaluation | `tests/`, `local_research_agent/evaluation_set.json` | Safety, API, model contract, and retrieval regression checks |
+
+API documentation is available at **http://127.0.0.1:8000/api/docs** while the server is running.
+
+## Safety and privacy boundaries
+
+- Only `.md` and `.txt` files inside the workspace are searchable; uploads are UTF-8 validated and bounded by file, count, and total-workspace limits.
+- Search paths are canonicalized. Traversal, hidden files, unsupported extensions, and symlinks outside the approved workspace are refused.
+- A `read_document` call is authorized only after a successful search has returned that document.
+- A final answer with retrieved evidence must cite exact line ranges returned by `read_document`; unsupported or invented citations cause the answer to be withheld.
+- The document content is treated as untrusted evidence, never as a source of tool permissions. The agent tool registry cannot write, delete, execute code, or make arbitrary network requests.
+- Remote model use is explicit and per-request. A non-local model endpoint must use HTTPS. The model key is never included in API status output or application logs.
+- This is a single-user local application, not a hardened multi-user service. Keep the default loopback binding; do not expose it to a public network. For a remote model, read that provider's data-retention terms before using sensitive documents.
+
+## Current limitations
+
+- Only Markdown and UTF-8 plain text are accepted. PDF/OCR, Office formats, semantic embeddings, persistent chat history, and multi-user accounts are intentionally out of scope.
+- The offline planner retrieves and quotes evidence; it does not compose a natural-language synthesis. An optional tool-capable model can synthesize, but users should verify its answer against the displayed citations.
+- The included evaluation set has six examples over two sample notes. It is useful for regressions, not a broad benchmark.
+
+## Project and learning notes
+
+For a concise, truthful portfolio description and resume bullet, see [`docs/portfolio-summary-en.md`](docs/portfolio-summary-en.md). Current Persian references are `docs/agent-architecture-fa.md`, `docs/safety-review-fa.md`, `docs/evaluation-fa.md`, and `docs/agent-capstone-fa.md`. Lessons 16–18 describe the current implementation; earlier lessons and Pathfinder documents are retained as historical learning/prototype notes.
+
+## Historical prototype
+
+`backend/` and `frontend/` contain a previous Pathfinder Canada program-explorer prototype. It is retained as historical work, is not part of this Agent's runtime, and is not the current project goal.

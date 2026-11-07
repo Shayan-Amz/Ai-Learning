@@ -1,64 +1,34 @@
-# پروژه‌ی آموزشی: Local Research Agent
+# Local Research Agent — مشخصات و معیار تحویل نسخه‌ی ۱
 
-## هدف
+## هدف محصول
 
-با ساخت یک **Agent ابزارمحور** یاد می‌گیریم چطور اجزای Agent را طراحی، پیاده‌سازی و آزمون کنیم. Agent فعلی فقط در یک پوشه‌ی محدود از فایل‌های Markdown جست‌وجو و خواندن انجام می‌دهد و پاسخ را با مسیر و شماره‌ی خط منبع برمی‌گرداند.
+یک برنامه‌ی local-first برای پژوهش روی فایل‌های شخصیِ انتخاب‌شده که پاسخ را به سند و بازه‌ی خط قابل‌بررسی وصل می‌کند. پروژه هدفش یادگیری Agent و ارائه‌ی یک نمونه‌ی عملی است؛ Pathfinder Canada فقط prototype تاریخی است.
 
-این پروژه برای یادگیری Agent است، نه ساخت فهرست دانشگاه‌ها یا یک chatbot عمومی. Prototype کاتالوگ دانشگاهی در `backend/` و `frontend/` فقط اثر قبلی و اختیاری است؛ در مسیر فعلی استفاده نمی‌شود.
+## قابلیت‌های تکمیل‌شده
 
-## معنای Agent در این پروژه
+- [x] رابط وب responsive در یک سرویس FastAPI؛ برای demo یا اجرای offline، build جداگانه‌ی frontend لازم نیست.
+- [x] انتخاب صریح فایل‌های Markdown و متن UTF-8 از browser؛ هیچ folder خودکار crawl نمی‌شود.
+- [x] ذخیره در `.local_data/knowledge/` با ignore در Git، محدودیت تعداد/حجم/extension و نمایش library.
+- [x] جست‌وجوی lexical رتبه‌بندی‌شده روی chunkهای خط‌محور، citation دقیق خط و read محدود.
+- [x] loop با `ToolCall`, `Observation`, `FinalAnswer`, Planner contract، registry allowlist و سقف step.
+- [x] شرط search-before-read؛ مدل نمی‌تواند مسیر خواندن را از خودش بسازد.
+- [x] citationهای نهایی با داده‌ی واقعی read observation اعتبارسنجی می‌شوند.
+- [x] حالت offline قابل‌استفاده بدون API key؛ شواهد را extractive نشان می‌دهد و summary جعلی نمی‌سازد.
+- [x] planner اختیاری OpenAI-compatible برای tool calling با مسیر local Ollama یا endpoint راه‌دور HTTPS.
+- [x] consent جداگانه برای هر پرسش وقتی مدل راه‌دور است؛ API key در پاسخ سلامت یا log اپلیکیشن نیست.
+- [x] ابزارهای Agent فقط read/search؛ حذف سند از UI نیازمند تأیید کاربر است و در اختیار Agent نیست.
+- [x] API tests، security regression tests، planner contract tests، retrieval evaluation و CI.
+- [x] راهنمای اجرا و توضیح مرزهای اعتماد در README و docs.
 
-مسیر هر اجرا چنین است:
+## مدل تهدید مختصر
 
-**هدف کاربر → Planner یک action پیشنهاد می‌دهد → Agent بررسی می‌کند action نهایی است یا tool call → Tool Registry فقط ابزار ثبت‌شده را اجرا می‌کند → Observation ثبت می‌شود → Planner بر اساس هدف و observation بعدی را انتخاب می‌کند → پاسخ یا توقف.**
+- **ورودی غیرقابل‌اعتماد:** سؤال کاربر، نام فایل و محتوای سند.
+- **داده‌ی محافظت‌شده:** فایل‌هایی که کاربر در workspace انتخاب کرده و API key محلی.
+- **عامل بالقوه‌ی مخرب:** محتوای سند با prompt injection، مدل ابزارمحور، ورودی path traversal یا درخواست cross-site.
+- **مرز مجوز:** allowlist ابزارها، search-before-read، canonical path containment، سقف حجم، citation validator و consent remote model.
+- **خطر باقیمانده:** مدل ممکن است citation معتبر را به claim نامربوط وصل کند؛ کاربر باید quotation و سند منبع را بازبینی کند. این برنامه multi-user یا public-server hardening ندارد.
 
-در کد فعلی، `DemoPlanner` یک planner قاعده‌محور و محدود است. این راهی برای دیدن و آزمودن حلقه‌ی Agent بدون API key است؛ **هنوز مدل زبانی انتخاب ابزار را انجام نمی‌دهد**. پس از فهمیدن این scaffold، Planner را به مدل واقعی متصل می‌کنیم و همان تست‌ها/قواعد را نگه می‌داریم.
+## بیرون از دامنه‌ی نسخه‌ی ۱
 
-## محدوده‌ی نسخه‌ی اول
-
-- دو ابزار read-only: جست‌وجوی متن در Markdown و خواندن محدوده‌ی کوچک از یک فایل.
-- فایل‌ها فقط از `local_research_agent/knowledge/` خوانده می‌شوند.
-- پاسخ نمونه شامل مسیر منبع و شماره‌خط‌های مشاهده‌شده است.
-- ابزار ناشناخته رد می‌شود؛ مسیر خروج از پوشه‌ی مجاز رد می‌شود.
-- سقف تعداد tool call مانع حلقه‌ی بی‌پایان می‌شود.
-- مدل، وب، shell، نوشتن فایل، ایمیل و اقدام بیرونی وجود ندارند.
-
-## معماری
-
-- `local_research_agent/core.py`: action، observation، Planner interface، tool registry و حلقه‌ی Agent.
-- `local_research_agent/tools.py`: ابزارهای محدود برای search/read و بررسی مسیر فایل.
-- `local_research_agent/planner.py`: planner آزمایشیِ قطعی؛ بعداً جایگزین‌پذیر با planner واقعی.
-- `local_research_agent/demo.py`: نقطه‌ی اجرای demo با خروجی ترمینال انگلیسی/ASCII.
-- `local_research_agent/knowledge/`: چند سند کوچک و عمومی برای demo؛ فایل‌های خصوصی کاربر به آن اضافه نمی‌شوند.
-- `tests/test_local_research_agent.py`: تست مسیر موفق، citation، sandbox مسیر، allowlist و stop condition.
-
-## مرزهای امنیت و اختیار
-
-1. **کمترین دسترسی:** Agent فقط `search_documents` و `read_document` را می‌بیند. هیچ `run_shell`, network, write یا delete tool ثبت نشده است.
-2. **محدوده‌ی فایل:** هر مسیر resolve می‌شود و باید داخل پوشه‌ی knowledge بماند؛ `../` و symlink خارج از پوشه نباید راهی به فایل‌های دیگر بدهند.
-3. **محتوای غیرقابل‌اعتماد:** متن فایل evidence است، نه دستور. سند نمی‌تواند اجازه‌ی ابزار تازه صادر کند یا safety policy را تغییر دهد.
-4. **محدودیت اجرا:** `max_steps` سقف tool callهای هر اجراست.
-5. **انسان در حلقه:** در MVP ابزار فقط می‌خواند، پس اقدام بیرونی نداریم. هر قابلیت نوشتن/ارسال/حذف آینده باید قبل از اجرا تأیید صریح انسان بگیرد.
-6. **حریم خصوصی:** کد فقط پوشه‌ی knowledge تعیین‌شده را می‌خواند؛ هیچ فایل خانه‌ی کاربر یا داده‌ی حساس را خودکار crawl نمی‌کند و هیچ‌چیز را به شبکه نمی‌فرستد.
-
-## مسیر یادگیری
-
-1. **Agent loop و contractها:** `ToolCall`, `FinalAnswer`, `Observation`, `Planner`, `ToolRegistry`, سقف step.
-2. **ابزار local research:** خطای ورودی، جست‌وجو، citation و جلوگیری از path traversal.
-3. **Planner مبتنی بر LLM:** ساخت tool schema و تبدیل پاسخ مدل به action معتبر؛ مدل فقط نام ابزارهای allowlist را می‌تواند پیشنهاد بدهد.
-4. **Trace و ارزیابی:** ثبت هدف/action/tool/result/stop reason و تست خروجی درست، نامعلوم، خطا و misuse.
-5. **تأیید انسانی:** فقط اگر بعداً ابزار نوشتن یا اقدام بیرونی اضافه شود.
-
-در هر مرحله ابتدا مدل ذهنی، بعد کد با توضیح ساده‌ی خط‌به‌خط، فرمان‌های PowerShell، پیش‌بینی خروجی و چند سؤال مرور می‌آید. کد و خروجی ترمینال انگلیسی/ASCII می‌مانند تا در Windows قابل‌خواندن باشند.
-
-## معیارهای تکمیل نسخه‌ی اول
-
-- [x] loop با Planner قابل‌تعویض اجرا می‌شود و observation را به تصمیم بعدی برمی‌گرداند.
-- [x] ابزارهای local search/read به محدوده‌ی Markdownهای پوشه‌ی مجاز محدودند.
-- [x] پاسخ نمونه به path و lineهای منبع اشاره می‌کند.
-- [x] unknown tool، path traversal، goal خالی و step runaway تست شده‌اند.
-- [x] اجرای demo بدون API key و dependency مدل ممکن است.
-- [ ] اتصال Planner به مدل زبانی با tool calling ساخت‌یافته.
-- [ ] ارزیابی کیفیت پاسخ و citation پس از اتصال مدل.
-
-راهنمای اجرای فعلی در [README](../README.md) است؛ درس اول پیاده‌سازی در [Lesson 16](lesson-16-agent-loop-fa.md) آمده است.
+- PDF/OCR و Office documents؛ embedding/vector database؛ حساب کاربری یا چندکاربره؛ تاریخچه‌ی دائمی؛ نوشتن فایل توسط Agent؛ ارسال پیام یا اقدام بیرونی.
+- هر write/action احتمالی در نسخه‌های بعد باید پشت تأیید صریح انسان و یک permission contract مستقل باشد.

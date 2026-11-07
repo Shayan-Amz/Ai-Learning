@@ -9,25 +9,28 @@ venv/
 __pycache__/
 *.py[cod]
 
-# Test/tool caches
-*.tsbuildinfo
+# Test/tool caches and coverage
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
 htmlcov/
 
-# Local databases and vector-store data
+# Local Research Agent data (selected documents are private user data)
+.local_data/
+data/local/
 *.sqlite3
 *.db
 chroma_db/
-data/local/
 
-# Frontend dependencies and generated assets
+# Frontend from the historical Pathfinder experiment
 node_modules/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+*.tsbuildinfo
 
 # OS/editor files
 .DS_Store
+Thumbs.db
+.vscode/
