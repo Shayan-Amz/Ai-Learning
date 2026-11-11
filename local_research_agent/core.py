@@ -280,6 +280,7 @@ class ResearchAgent:
 
         observations: list[Observation] = []
         grounding_retry_used = False
+        grounding_retry_read_attempted = False
         for _ in range(self._max_steps + 2):
             try:
                 action = self._planner.choose_next_action(goal, tuple(observations))
@@ -294,11 +295,13 @@ class ResearchAgent:
             if isinstance(action, FinalAnswer):
                 if (
                     grounding_retry_used
-                    and not self._has_read_after_grounding_feedback(observations)
+                    and not grounding_retry_read_attempted
+                    and not self._has_new_read_after_grounding_feedback(observations)
                     and len(observations) < self._max_steps
                 ):
                     additional_read = self._next_unread_search_result(observations)
                     if additional_read is not None:
+                        grounding_retry_read_attempted = True
                         authorization_error = self._authorize_tool_call(
                             additional_read,
                             observations,
@@ -364,9 +367,7 @@ class ResearchAgent:
         observations: Sequence[Observation],
     ) -> AgentResult:
         successful_searches = [
-            item
-            for item in observations
-            if item.tool_name == "search_documents" and not item.error
+            item for item in observations if item.tool_name == "search_documents" and not item.error
         ]
         if not successful_searches:
             return AgentResult(
@@ -376,13 +377,10 @@ class ResearchAgent:
             )
 
         matching_passages = any(
-            isinstance(item.result, list) and bool(item.result)
-            for item in successful_searches
+            isinstance(item.result, list) and bool(item.result) for item in successful_searches
         )
         successful_reads = [
-            item
-            for item in observations
-            if item.tool_name == "read_document" and not item.error
+            item for item in observations if item.tool_name == "read_document" and not item.error
         ]
         if not matching_passages:
             return AgentResult(
@@ -421,14 +419,8 @@ class ResearchAgent:
                 citations_well_formed = False
                 continue
             requested_citations.add((item.path, item.start_line, item.end_line))
-        valid_keys = {
-            (item.path, item.start_line, item.end_line) for item in valid_citations
-        }
-        if (
-            not citations_well_formed
-            or not valid_citations
-            or requested_citations != valid_keys
-        ):
+        valid_keys = {(item.path, item.start_line, item.end_line) for item in valid_citations}
+        if not citations_well_formed or not valid_citations or requested_citations != valid_keys:
             return AgentResult(
                 answer=(
                     "I withheld the answer because its citations could not be verified "
@@ -468,24 +460,10 @@ class ResearchAgent:
         )
 
     @staticmethod
-    def _has_read_after_grounding_feedback(observations: Sequence[Observation]) -> bool:
-        feedback_index = next(
-            (
-                index
-                for index in range(len(observations) - 1, -1, -1)
-                if observations[index].tool_name == "answer_validation"
-            ),
-            None,
-        )
-        return feedback_index is not None and any(
-            item.tool_name == "read_document" for item in observations[feedback_index + 1 :]
-        )
-
-    @staticmethod
-    def _next_unread_search_result(
+    def _successful_read_ranges(
         observations: Sequence[Observation],
-    ) -> ToolCall | None:
-        read_ranges: list[tuple[str, int, int]] = []
+    ) -> list[tuple[str, int, int]]:
+        ranges: list[tuple[str, int, int]] = []
         for observation in observations:
             if observation.tool_name != "read_document" or observation.error:
                 continue
@@ -495,16 +473,131 @@ class ResearchAgent:
             path = result.get("path")
             start = result.get("start_line")
             end = result.get("end_line")
+            content = result.get("content")
             if (
                 isinstance(path, str)
                 and isinstance(start, int)
                 and not isinstance(start, bool)
                 and isinstance(end, int)
                 and not isinstance(end, bool)
+                and start >= 1
+                and end >= start
+                and end - start + 1 <= 40
+                and isinstance(content, str)
+                and content.strip()
             ):
-                read_ranges.append((path, start, end))
+                ranges.append((path, start, end))
+        return ranges
 
-        for observation in reversed(observations):
+    @staticmethod
+    def _search_result_ranges(
+        observations: Sequence[Observation],
+    ) -> list[tuple[str, int, int]]:
+        ranges: list[tuple[str, int, int]] = []
+        for observation in observations:
+            if (
+                observation.tool_name != "search_documents"
+                or observation.error
+                or not isinstance(observation.result, list)
+            ):
+                continue
+            for result in observation.result:
+                if not isinstance(result, dict):
+                    continue
+                path = result.get("path")
+                start = result.get("start_line")
+                end = result.get("end_line")
+                if (
+                    isinstance(path, str)
+                    and isinstance(start, int)
+                    and not isinstance(start, bool)
+                    and isinstance(end, int)
+                    and not isinstance(end, bool)
+                    and start >= 1
+                    and end >= start
+                    and end - start + 1 <= 40
+                ):
+                    ranges.append((path, start, end))
+        return ranges
+
+    @staticmethod
+    def _first_unread_range(
+        path: str,
+        start: int,
+        end: int,
+        read_ranges: Sequence[tuple[str, int, int]],
+    ) -> tuple[int, int] | None:
+        cursor = start
+        matching_ranges = sorted(
+            (read_start, read_end)
+            for read_path, read_start, read_end in read_ranges
+            if read_path == path and read_start <= end and read_end >= start
+        )
+        for read_start, read_end in matching_ranges:
+            if read_start > cursor:
+                return cursor, min(end, read_start - 1)
+            cursor = max(cursor, read_end + 1)
+            if cursor > end:
+                return None
+        return (cursor, end) if cursor <= end else None
+
+    @classmethod
+    def _has_new_read_after_grounding_feedback(
+        cls,
+        observations: Sequence[Observation],
+    ) -> bool:
+        feedback_index = next(
+            (
+                index
+                for index in range(len(observations) - 1, -1, -1)
+                if observations[index].tool_name == "answer_validation"
+            ),
+            None,
+        )
+        if feedback_index is None:
+            return False
+
+        retry_observations = observations[feedback_index + 1 :]
+        earlier_reads = cls._successful_read_ranges(observations[:feedback_index])
+        search_ranges = cls._search_result_ranges(retry_observations)
+        later_reads = cls._successful_read_ranges(retry_observations)
+        for read_path, read_start, read_end in later_reads:
+            for search_path, search_start, search_end in search_ranges:
+                overlap_start = max(read_start, search_start)
+                overlap_end = min(read_end, search_end)
+                if (
+                    read_path == search_path
+                    and overlap_start <= overlap_end
+                    and cls._first_unread_range(
+                        read_path,
+                        overlap_start,
+                        overlap_end,
+                        earlier_reads,
+                    )
+                    is not None
+                ):
+                    return True
+        return False
+
+    @classmethod
+    def _next_unread_search_result(
+        cls,
+        observations: Sequence[Observation],
+    ) -> ToolCall | None:
+        feedback_index = next(
+            (
+                index
+                for index in range(len(observations) - 1, -1, -1)
+                if observations[index].tool_name == "answer_validation"
+            ),
+            None,
+        )
+        if feedback_index is None:
+            return None
+
+        read_ranges = cls._successful_read_ranges(observations)
+        partially_unread_candidate: ToolCall | None = None
+        for observation in reversed(observations[feedback_index + 1 :]):
             if (
                 observation.tool_name != "search_documents"
                 or observation.error
@@ -528,16 +621,18 @@ class ResearchAgent:
                     or end - start + 1 > 40
                 ):
                     continue
-                overlaps_read = any(
-                    read_path == path and start <= read_end and end >= read_start
-                    for read_path, read_start, read_end in read_ranges
+                unread_range = cls._first_unread_range(path, start, end, read_ranges)
+                if unread_range is None:
+                    continue
+                candidate = ToolCall(
+                    "read_document",
+                    {"path": path, "start_line": start, "end_line": end},
                 )
-                if not overlaps_read:
-                    return ToolCall(
-                        "read_document",
-                        {"path": path, "start_line": start, "end_line": end},
-                    )
-        return None
+                if unread_range == (start, end):
+                    return candidate
+                if partially_unread_candidate is None:
+                    partially_unread_candidate = candidate
+        return partially_unread_candidate
 
     @classmethod
     def _ground_answer(
@@ -734,8 +829,7 @@ class ResearchAgent:
             if not isinstance(observation.result, list):
                 continue
             if any(
-                isinstance(item, dict) and item.get("path") == path
-                for item in observation.result
+                isinstance(item, dict) and item.get("path") == path for item in observation.result
             ):
                 return True
         return False
@@ -787,9 +881,7 @@ class ResearchAgent:
             if citation.start_line < 1 or citation.end_line < citation.start_line:
                 continue
             if any(
-                path == citation.path
-                and citation.start_line >= start
-                and citation.end_line <= end
+                path == citation.path and citation.start_line >= start and citation.end_line <= end
                 for path, start, end in evidence
             ):
                 accepted.append(citation)
