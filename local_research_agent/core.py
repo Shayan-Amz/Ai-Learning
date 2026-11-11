@@ -292,6 +292,24 @@ class ResearchAgent:
                 )
 
             if isinstance(action, FinalAnswer):
+                if (
+                    grounding_retry_used
+                    and not self._has_read_after_grounding_feedback(observations)
+                    and len(observations) < self._max_steps
+                ):
+                    additional_read = self._next_unread_search_result(observations)
+                    if additional_read is not None:
+                        authorization_error = self._authorize_tool_call(
+                            additional_read,
+                            observations,
+                        )
+                        observations.append(
+                            authorization_error
+                            if authorization_error
+                            else self._tools.execute(additional_read)
+                        )
+                        continue
+
                 result = self._finish(action, observations)
                 if (
                     result.stop_reason == "ungrounded_answer"
@@ -448,6 +466,78 @@ class ResearchAgent:
             stop_reason="finished",
             citations=grounded_citations,
         )
+
+    @staticmethod
+    def _has_read_after_grounding_feedback(observations: Sequence[Observation]) -> bool:
+        feedback_index = next(
+            (
+                index
+                for index in range(len(observations) - 1, -1, -1)
+                if observations[index].tool_name == "answer_validation"
+            ),
+            None,
+        )
+        return feedback_index is not None and any(
+            item.tool_name == "read_document" for item in observations[feedback_index + 1 :]
+        )
+
+    @staticmethod
+    def _next_unread_search_result(
+        observations: Sequence[Observation],
+    ) -> ToolCall | None:
+        read_ranges: list[tuple[str, int, int]] = []
+        for observation in observations:
+            if observation.tool_name != "read_document" or observation.error:
+                continue
+            result = observation.result
+            if not isinstance(result, dict):
+                continue
+            path = result.get("path")
+            start = result.get("start_line")
+            end = result.get("end_line")
+            if (
+                isinstance(path, str)
+                and isinstance(start, int)
+                and not isinstance(start, bool)
+                and isinstance(end, int)
+                and not isinstance(end, bool)
+            ):
+                read_ranges.append((path, start, end))
+
+        for observation in reversed(observations):
+            if (
+                observation.tool_name != "search_documents"
+                or observation.error
+                or not isinstance(observation.result, list)
+            ):
+                continue
+            for result in observation.result:
+                if not isinstance(result, dict):
+                    continue
+                path = result.get("path")
+                start = result.get("start_line")
+                end = result.get("end_line")
+                if (
+                    not isinstance(path, str)
+                    or not isinstance(start, int)
+                    or isinstance(start, bool)
+                    or not isinstance(end, int)
+                    or isinstance(end, bool)
+                    or start < 1
+                    or end < start
+                    or end - start + 1 > 40
+                ):
+                    continue
+                overlaps_read = any(
+                    read_path == path and start <= read_end and end >= read_start
+                    for read_path, read_start, read_end in read_ranges
+                )
+                if not overlaps_read:
+                    return ToolCall(
+                        "read_document",
+                        {"path": path, "start_line": start, "end_line": end},
+                    )
+        return None
 
     @classmethod
     def _ground_answer(
