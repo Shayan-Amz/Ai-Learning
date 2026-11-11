@@ -5,6 +5,7 @@ from pathlib import Path
 
 from local_research_agent.core import (
     Action,
+    Citation,
     FinalAnswer,
     Observation,
     PlannerError,
@@ -147,3 +148,71 @@ def test_agent_stops_cleanly_on_a_planner_failure():
 
     assert result.stop_reason == "planner_error"
     assert "provider internals" not in result.answer
+
+
+def test_agent_retries_after_ungrounded_answer_and_finds_another_passage(tmp_path: Path):
+    knowledge_dir = tmp_path / "knowledge"
+    knowledge_dir.mkdir()
+    (knowledge_dir / "nanofluid.md").write_text(
+        "Slide title: DLVO\n"
+        "DLVO interactions support nanofluid stability by balancing attractive and repulsive forces.\n",
+        encoding="utf-8",
+    )
+    tools = build_read_only_tools(knowledge_dir)
+
+    class RetryPlanner:
+        def choose_next_action(
+            self,
+            goal: str,
+            observations: Sequence[Observation],
+        ) -> Action:
+            feedback_index = next(
+                (
+                    index
+                    for index, observation in enumerate(observations)
+                    if observation.tool_name == "answer_validation"
+                ),
+                None,
+            )
+            if not observations:
+                return ToolCall("search_documents", {"query": "DLVO"})
+            if feedback_index is None:
+                if len(observations) == 1:
+                    return ToolCall(
+                        "read_document",
+                        {"path": "nanofluid.md", "start_line": 1, "end_line": 1},
+                    )
+                return FinalAnswer(
+                    "DLVO theory improves electrostatic stabilization [1].",
+                    (Citation("nanofluid.md", 1, 1),),
+                )
+
+            observations_after_feedback = observations[feedback_index + 1 :]
+            if not any(item.tool_name == "search_documents" for item in observations_after_feedback):
+                return ToolCall(
+                    "search_documents",
+                    {"query": "DLVO nanofluid stability"},
+                )
+            if not any(item.tool_name == "read_document" for item in observations_after_feedback):
+                return ToolCall(
+                    "read_document",
+                    {"path": "nanofluid.md", "start_line": 2, "end_line": 2},
+                )
+            return FinalAnswer(
+                "DLVO interactions support nanofluid stability by balancing attractive and "
+                "repulsive forces [1].",
+                (Citation("nanofluid.md", 2, 2),),
+            )
+
+    result = ResearchAgent(RetryPlanner(), tools).run("What role does DLVO play?")
+
+    assert result.stop_reason == "finished"
+    assert "balancing attractive and repulsive forces" in result.answer
+    assert result.citations == (Citation("nanofluid.md", 2, 2),)
+    assert [item.tool_name for item in result.observations] == [
+        "search_documents",
+        "read_document",
+        "answer_validation",
+        "search_documents",
+        "read_document",
+    ]

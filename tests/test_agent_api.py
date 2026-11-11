@@ -429,6 +429,7 @@ def test_local_model_withholds_dlvo_claim_not_supported_by_the_cited_lines(
             },
         ),
     ]
+    actions.append(actions[-1])
     calls = 0
 
     def fake_post(url, *, headers, json: dict[str, object], timeout):
@@ -468,10 +469,12 @@ def test_local_model_withholds_dlvo_claim_not_supported_by_the_cited_lines(
     assert body["stop_reason"] == "ungrounded_answer"
     assert body["citations"] == []
     assert body["trace"][1]["status"] == "ok"
+    assert body["trace"][2]["status"] == "blocked"
     assert "withheld" in body["answer"].casefold()
     assert "Debye-Huckel" not in body["answer"]
     assert [item["tool"] for item in body["trace"]] == [
         "search_documents",
         "read_document",
+        "answer_validation",
     ]
-    assert calls == 3
+    assert calls == 4

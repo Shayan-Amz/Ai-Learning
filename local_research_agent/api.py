@@ -479,6 +479,9 @@ def _trace_items(result: AgentResult) -> list[TraceItem]:
             detail = observation.error
             blocked_terms = ("not registered", "escapes", "must be returned", "must search")
             state = "blocked" if any(term in detail.casefold() for term in blocked_terms) else "error"
+        elif observation.tool_name == "answer_validation":
+            detail = "The answer did not match its cited lines; the agent is checking other evidence."
+            state = "blocked"
         elif observation.tool_name == "search_documents":
             count = len(observation.result) if isinstance(observation.result, list) else 0
             detail = f"Found {count} relevant passage(s) in the approved folder."

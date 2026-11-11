@@ -225,7 +225,7 @@ function createTrace(trace, stopReason) {
   const details = document.createElement("details");
   details.className = "trace-details";
   const summary = document.createElement("summary");
-  summary.textContent = `Run trace · ${trace.length} tool step${trace.length === 1 ? "" : "s"} · ${stopReason}`;
+  summary.textContent = `Run trace · ${trace.length} step${trace.length === 1 ? "" : "s"} · ${stopReason}`;
   const list = document.createElement("ol");
   list.className = "trace-list";
   for (const item of trace) {

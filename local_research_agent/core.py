@@ -279,7 +279,8 @@ class ResearchAgent:
             raise ValueError("goal must be 1000 characters or fewer")
 
         observations: list[Observation] = []
-        for _ in range(self._max_steps + 1):
+        grounding_retry_used = False
+        for _ in range(self._max_steps + 2):
             try:
                 action = self._planner.choose_next_action(goal, tuple(observations))
             except PlannerError as error:
@@ -287,18 +288,35 @@ class ResearchAgent:
                     answer=_safe_planner_error_message(error),
                     observations=tuple(observations),
                     stop_reason="planner_error",
-                    citations=self._citations_from_observations(observations),
+                    citations=self._fallback_citations(observations),
                 )
 
             if isinstance(action, FinalAnswer):
-                return self._finish(action, observations)
+                result = self._finish(action, observations)
+                if (
+                    result.stop_reason == "ungrounded_answer"
+                    and not grounding_retry_used
+                    and len(observations) + 2 < self._max_steps
+                ):
+                    observations.append(
+                        Observation(
+                            tool_name="answer_validation",
+                            result=(
+                                "The previous answer did not match its cited text. Search for or "
+                                "read another passage; do not repeat unsupported claims."
+                            ),
+                        )
+                    )
+                    grounding_retry_used = True
+                    continue
+                return result
 
             if not isinstance(action, ToolCall):
                 return AgentResult(
                     answer="The planner returned an invalid action. No further action was taken.",
                     observations=tuple(observations),
                     stop_reason="invalid_action",
-                    citations=self._citations_from_observations(observations),
+                    citations=self._fallback_citations(observations),
                 )
 
             if len(observations) >= self._max_steps:
@@ -306,7 +324,7 @@ class ResearchAgent:
                     answer="Stopped safely: the maximum number of tool steps was reached.",
                     observations=tuple(observations),
                     stop_reason="max_steps",
-                    citations=self._citations_from_observations(observations),
+                    citations=self._fallback_citations(observations),
                 )
 
             authorization_error = self._authorize_tool_call(action, observations)
@@ -319,7 +337,7 @@ class ResearchAgent:
             answer="Stopped safely: the maximum number of tool steps was reached.",
             observations=tuple(observations),
             stop_reason="max_steps",
-            citations=self._citations_from_observations(observations),
+            citations=self._fallback_citations(observations),
         )
 
     def _finish(
@@ -689,6 +707,15 @@ class ResearchAgent:
             if len(accepted) >= 8:
                 break
         return tuple(accepted)
+
+    @classmethod
+    def _fallback_citations(
+        cls,
+        observations: Sequence[Observation],
+    ) -> tuple[Citation, ...]:
+        if any(item.tool_name == "answer_validation" for item in observations):
+            return ()
+        return cls._citations_from_observations(observations)
 
     @classmethod
     def _citations_from_observations(
