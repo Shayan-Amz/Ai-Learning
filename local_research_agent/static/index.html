@@ -51,10 +51,11 @@
               <svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14.5v3A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
             </span>
             <strong>Add documents</strong>
-            <span>Choose .md or .txt files</span>
+            <span>Choose .md, .txt, or .text files</span>
             <small>Up to 10 files · 5 MiB each</small>
           </button>
-          <input id="file-input" class="visually-hidden" type="file" accept=".md,.txt,text/plain,text/markdown" multiple />
+          <input id="file-input" class="visually-hidden" type="file" accept=".md,.txt,.text,text/plain,text/markdown" multiple />
+          <p id="upload-feedback" class="upload-feedback" role="status" aria-live="polite"></p>
 
           <div class="library-list-heading">
             <span>IN THIS WORKSPACE</span>
@@ -98,8 +99,8 @@
               </div>
               <p class="eyebrow">READY WHEN YOU ARE</p>
               <h3>Your documents, with receipts.</h3>
-              <p class="welcome-copy">Ask a question about the files in your library. The offline mode retrieves evidence directly; an optional configured model can synthesize an answer with citations.</p>
-              <div class="suggestion-label">TRY A QUESTION</div>
+              <p class="welcome-copy">Offline mode is keyword search, not a chatbot: it finds matching words in your files and shows the source lines, but it does not understand synonyms or write summaries. Use terms that appear in your document. For natural-language answers, configure a local model; remote models require your consent.</p>
+              <div class="suggestion-label">EXAMPLES FOR THE INCLUDED SAMPLE NOTES</div>
               <div class="suggestions">
                 <button class="suggestion-chip" type="button" data-question="What does the local note say about human approval?">What needs human approval?</button>
                 <button class="suggestion-chip" type="button" data-question="Summarize the key safety rules in my notes.">Summarize the safety rules</button>

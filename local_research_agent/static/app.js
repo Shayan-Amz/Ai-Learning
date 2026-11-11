@@ -8,6 +8,7 @@ const elements = {
   documentList: document.querySelector("#document-list"),
   uploadTrigger: document.querySelector("#upload-trigger"),
   fileInput: document.querySelector("#file-input"),
+  uploadFeedback: document.querySelector("#upload-feedback"),
   refreshDocuments: document.querySelector("#refresh-documents"),
   remoteNotice: document.querySelector("#remote-notice"),
   remoteConsentControl: document.querySelector("#remote-consent-control"),
@@ -141,6 +142,8 @@ async function uploadSelectedFiles(fileList) {
   if (files.length === 0) return;
   const formData = new FormData();
   for (const file of files) formData.append("files", file, file.name);
+  elements.uploadFeedback.textContent = `Uploading ${files.length} file${files.length === 1 ? "" : "s"}…`;
+  elements.uploadFeedback.classList.remove("is-error");
   elements.uploadTrigger.disabled = true;
   elements.uploadTrigger.classList.add("is-loading");
   try {
@@ -149,9 +152,13 @@ async function uploadSelectedFiles(fileList) {
       headers: REQUEST_HEADER,
       body: formData,
     });
+    const names = added.map((documentInfo) => documentInfo.name).join(", ");
+    elements.uploadFeedback.textContent = `Added ${names}. It is now in the document list.`;
     showToast(`Added ${added.length} document${added.length === 1 ? "" : "s"}.`);
     await loadDocuments();
   } catch (error) {
+    elements.uploadFeedback.textContent = error.message;
+    elements.uploadFeedback.classList.add("is-error");
     showToast(error.message, true);
   } finally {
     elements.uploadTrigger.disabled = false;
@@ -364,10 +371,30 @@ async function submitQuestion(event) {
   }
 }
 
+async function checkLocalModelStatus() {
+  try {
+    const status = await requestJson("/api/model/status");
+    elements.modelBadge.title = status.message;
+    if (status.reachable) {
+      elements.modelBadge.textContent = `Local model ready · ${state.modelName}`;
+      elements.modelBadge.className = "model-badge mode-local";
+    } else {
+      elements.modelBadge.textContent = `Local model unavailable · ${state.modelName}`;
+      elements.modelBadge.className = "model-badge mode-error";
+      showToast(status.message, true);
+    }
+  } catch (error) {
+    elements.modelBadge.textContent = "Could not check local model";
+    elements.modelBadge.className = "model-badge mode-error";
+    elements.modelBadge.title = error.message;
+  }
+}
+
 async function loadHealth() {
   try {
     const status = await requestJson("/api/health");
     updateModelBadge(status);
+    if (state.modelMode === "local") await checkLocalModelStatus();
   } catch (error) {
     elements.modelBadge.textContent = "Agent unavailable";
     elements.modelBadge.className = "model-badge mode-error";

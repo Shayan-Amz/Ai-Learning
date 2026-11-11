@@ -15,7 +15,7 @@ py -3 -m venv .venv
 ## رابط کاربری
 
 - سمت چپ فقط فایل‌های انتخاب‌شده و sample notes را فهرست می‌کند.
-- افزودن سند از file picker، drag/drop یا POST API می‌گذرد؛ suffix مجاز `.md` و `.txt` است.
+- افزودن سند از file picker، drag/drop یا POST API می‌گذرد؛ suffix مجاز `.md`، `.txt` و `.text` است.
 - پرسش‌ها به `/api/ask` می‌روند و در حافظه‌ی سرور ذخیره نمی‌شوند.
 - جواب شامل stop reason، trace ابزار، citation و quotation است.
 - حالت مدل راه‌دور یک warning و checkbox consent قبل از درخواست دارد.

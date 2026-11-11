@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path, PurePosixPath
 from typing import Annotated
 
+import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,7 +20,7 @@ MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MAX_UPLOAD_FILES = 10
 MAX_WORKSPACE_BYTES = 50 * 1024 * 1024
 MAX_WORKSPACE_DOCUMENTS = 100
-_ALLOWED_SUFFIXES = {".md", ".txt"}
+_ALLOWED_SUFFIXES = {".md", ".txt", ".text"}
 STATIC_DIR = Path(__file__).with_name("static")
 SAMPLE_DIR = Path(__file__).with_name("knowledge")
 
@@ -118,6 +119,67 @@ def create_app(settings: Settings | None = None, *, seed_samples: bool = True) -
             "model_name": app_settings.llm_model if app_settings.model_enabled else None,
             "allowed_tools": ["search_documents", "read_document"],
             "max_agent_steps": app_settings.max_agent_steps,
+        }
+
+    @app.get("/api/model/status")
+    def model_status() -> dict[str, object | None]:
+        if not app_settings.model_enabled:
+            return {
+                "configured": False,
+                "mode": "offline",
+                "reachable": None,
+                "message": "No model is configured; the app is using offline evidence mode.",
+            }
+        if app_settings.model_is_remote:
+            return {
+                "configured": True,
+                "mode": "remote",
+                "reachable": None,
+                "message": (
+                    "Remote model endpoints are not checked automatically. "
+                    "They are contacted only after per-question consent."
+                ),
+            }
+
+        headers = {}
+        if app_settings.llm_api_key:
+            headers["Authorization"] = f"Bearer {app_settings.llm_api_key}"
+        endpoint = f"{(app_settings.llm_base_url or '').rstrip('/')}/models"
+        try:
+            response = httpx.get(endpoint, headers=headers, timeout=2.0)
+        except httpx.TimeoutException:
+            return {
+                "configured": True,
+                "mode": "local",
+                "reachable": False,
+                "message": "The local model check timed out. Try again or check that Ollama is running.",
+            }
+        except httpx.HTTPError:
+            return {
+                "configured": True,
+                "mode": "local",
+                "reachable": False,
+                "message": (
+                    "Could not reach the local model endpoint. Start Ollama and verify the "
+                    "OpenAI-compatible URL in .env."
+                ),
+            }
+
+        if response.is_success:
+            return {
+                "configured": True,
+                "mode": "local",
+                "reachable": True,
+                "message": "The local model endpoint is reachable.",
+            }
+        return {
+            "configured": True,
+            "mode": "local",
+            "reachable": False,
+            "message": (
+                f"The local model endpoint returned HTTP {response.status_code}. "
+                "Check Ollama and the /v1 base URL in .env."
+            ),
         }
 
     @app.get("/api/documents", response_model=list[DocumentInfo])
@@ -313,7 +375,11 @@ def create_app(settings: Settings | None = None, *, seed_samples: bool = True) -
                 and bool(item.result)
                 for item in result.observations
             )
-            if (had_read_evidence or had_search_hits) and not citations:
+            if (
+                (had_read_evidence or had_search_hits)
+                and not citations
+                and result.stop_reason != "ungrounded_answer"
+            ):
                 answer = (
                     "I withheld the model response because it did not return a citation "
                     "that could be verified against the passages read. Please try again."
@@ -358,7 +424,7 @@ def _safe_upload_name(raw_name: str) -> str:
         raise HTTPException(status_code=400, detail="Hidden or invalid file names are not accepted.")
     suffix = Path(basename).suffix.casefold()
     if suffix not in _ALLOWED_SUFFIXES:
-        raise HTTPException(status_code=415, detail="Only .md and .txt files are supported.")
+        raise HTTPException(status_code=415, detail="Only .md, .txt, and .text files are supported.")
     stem = Path(basename).stem
     safe_stem = "".join(char if char.isalnum() or char in "-_" else "_" for char in stem)
     safe_stem = safe_stem.strip("_-.")[:100] or "document"

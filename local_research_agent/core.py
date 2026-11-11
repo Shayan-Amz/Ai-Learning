@@ -1,8 +1,144 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol, TypeAlias
+
+_GROUNDING_STOP_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "been",
+        "being",
+        "but",
+        "by",
+        "do",
+        "does",
+        "did",
+        "for",
+        "from",
+        "had",
+        "has",
+        "have",
+        "he",
+        "her",
+        "hers",
+        "him",
+        "his",
+        "how",
+        "i",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "me",
+        "my",
+        "of",
+        "on",
+        "or",
+        "our",
+        "ours",
+        "she",
+        "so",
+        "than",
+        "that",
+        "the",
+        "their",
+        "them",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "to",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "whom",
+        "why",
+        "will",
+        "with",
+        "would",
+        "you",
+        "your",
+        "yours",
+        "according",
+        "answer",
+        "based",
+        "document",
+        "documents",
+        "evidence",
+        "found",
+        "information",
+        "local",
+        "note",
+        "notes",
+        "passage",
+        "passages",
+        "provided",
+        "relevant",
+        "result",
+        "results",
+        "retrieved",
+        "source",
+        "sources",
+        "stated",
+        "states",
+        "say",
+        "says",
+        "said",
+        "show",
+        "shows",
+        "mention",
+        "mentions",
+        "describe",
+        "describes",
+        "indicate",
+        "indicates",
+        "report",
+        "reports",
+        "line",
+        "lines",
+        "citation",
+        "citations",
+        "require",
+        "requires",
+        "required",
+        "requirement",
+        "requirements",
+        "need",
+        "needs",
+        "necessary",
+        "necessity",
+        "must",
+        "first",
+        "happen",
+        "happens",
+        "occur",
+        "occurs",
+    }
+)
+_GENERIC_SOURCE_PREFIX = re.compile(
+    r"^\s*(?:(?:according to|based on|in|from)\s+(?:the\s+)?(?:provided\s+)?"
+    r"(?:document|notes?|source|passage|evidence)|(?:the\s+)?"
+    r"(?:document|notes?|source|passage|evidence)\s+"
+    r"(?:says?|states?|mentions?|notes?|indicates?|shows?|describes?|reports?))"
+    r"\s*[:,]?\s*(?:that\s+)?",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -88,6 +224,39 @@ class ToolRegistry:
         return Observation(tool_name=call.name, result=result)
 
 
+def _safe_planner_error_message(error: PlannerError) -> str:
+    """Translate known planner failures into actionable text without exposing internals."""
+    message = str(error)
+    if message == "The configured model could not be reached.":
+        return (
+            "Could not reach the configured model. If using Ollama, make sure it is running "
+            "and that .env points to its local OpenAI-compatible /v1 endpoint."
+        )
+    if message == "The configured model timed out.":
+        return (
+            "The configured model timed out. Try a smaller local model or increase "
+            "LOCAL_RESEARCH_LLM_TIMEOUT_SECONDS in .env."
+        )
+    if message.startswith("The configured model returned HTTP "):
+        status_code = message.rsplit(" ", 1)[-1].rstrip(".")
+        if status_code.isdigit():
+            if status_code == "404":
+                return (
+                    "The model endpoint or model name was not found (HTTP 404). Check .env; "
+                    "for Ollama, make sure you have pulled the configured model."
+                )
+            if status_code in {"400", "422"}:
+                return (
+                    f"The model rejected the request (HTTP {status_code}). Check that the "
+                    "selected model supports tool calling."
+                )
+            return f"The configured model returned HTTP {status_code}. Check its URL and model settings."
+    return (
+        "The planner could not complete this request. Check the configured model and try again. "
+        "Provider internals were not included."
+    )
+
+
 class ResearchAgent:
     """A bounded, evidence-first observe/act loop with citation enforcement."""
 
@@ -113,9 +282,9 @@ class ResearchAgent:
         for _ in range(self._max_steps + 1):
             try:
                 action = self._planner.choose_next_action(goal, tuple(observations))
-            except PlannerError:
+            except PlannerError as error:
                 return AgentResult(
-                    answer="The planner could not complete this request. Please try again.",
+                    answer=_safe_planner_error_message(error),
                     observations=tuple(observations),
                     stop_reason="planner_error",
                     citations=self._citations_from_observations(observations),
@@ -182,8 +351,9 @@ class ResearchAgent:
         if not matching_passages:
             return AgentResult(
                 answer=(
-                    "I could not find relevant passages in the approved local documents. "
-                    "Try a different question or add more Markdown or text files."
+                    "No matching passages were found. Offline mode searches for overlapping words in your files; "
+                    "it does not understand synonyms or generate summaries. Try an exact term from "
+                    "the document, or configure a local model for natural-language answers."
                 ),
                 observations=tuple(observations),
                 stop_reason="no_evidence",
@@ -241,12 +411,186 @@ class ResearchAgent:
                 stop_reason="invalid_answer",
                 citations=valid_citations,
             )
+
+        grounded_answer = self._ground_answer(answer, valid_citations, observations)
+        if grounded_answer is None:
+            return AgentResult(
+                answer=(
+                    "I withheld the answer because one or more factual claims could not be "
+                    "matched to the cited source text. Please try a question about a point "
+                    "stated directly in the document."
+                ),
+                observations=tuple(observations),
+                stop_reason="ungrounded_answer",
+            )
+        grounded_text, grounded_citations = grounded_answer
         return AgentResult(
-            answer=answer,
+            answer=grounded_text,
             observations=tuple(observations),
             stop_reason="finished",
-            citations=valid_citations,
+            citations=grounded_citations,
         )
+
+    @classmethod
+    def _ground_answer(
+        cls,
+        answer: str,
+        citations: Sequence[Citation],
+        observations: Sequence[Observation],
+    ) -> tuple[str, tuple[Citation, ...]] | None:
+        """Keep an answer only when each sentence matches its cited source text."""
+        evidence_by_citation = [
+            cls._citation_evidence_lines(citation, observations) for citation in citations
+        ]
+        if not evidence_by_citation or not any(evidence_by_citation):
+            return None
+
+        source_footer = re.search(r"(?im)^\s*Sources:.*$", answer)
+        if source_footer:
+            answer = answer[: source_footer.start()].rstrip()
+        answer_body = answer
+        sentences = re.split(
+            r"\n+|(?<=[!?;])\s+|(?<!\d)\.\s+",
+            answer_body,
+        )
+        used_citations: set[int] = set()
+        checked_claim = False
+        for sentence in sentences:
+            references = [int(value) - 1 for value in re.findall(r"\[(\d+)\]", sentence)]
+            claim = re.sub(r"\[(\d+)\]", "", sentence)
+            claim = re.sub(r"^\s*(?:[-*•]\s*|#{1,6}\s*|\d+[.)]\s*)", "", claim)
+            claim = _GENERIC_SOURCE_PREFIX.sub("", claim, count=1).strip()
+            claim_tokens = cls._grounding_tokens(claim)
+            if not claim_tokens:
+                continue
+            checked_claim = True
+
+            if references:
+                referenced = set(references)
+                if any(index < 0 or index >= len(evidence_by_citation) for index in referenced):
+                    return None
+                for index in referenced:
+                    if not cls._claim_matches_lines(claim_tokens, evidence_by_citation[index]):
+                        return None
+                    used_citations.add(index)
+                continue
+
+            matching = [
+                index
+                for index, lines in enumerate(evidence_by_citation)
+                if cls._claim_matches_lines(claim_tokens, lines)
+            ]
+            if not matching:
+                return None
+            used_citations.update(matching)
+
+        if not checked_claim or not used_citations:
+            return None
+
+        selected_indexes = sorted(used_citations)
+        citation_numbers = {
+            original_index + 1: selected_index + 1
+            for selected_index, original_index in enumerate(selected_indexes)
+        }
+
+        def remap_reference(match: re.Match[str]) -> str:
+            new_number = citation_numbers.get(int(match.group(1)))
+            return f"[{new_number}]" if new_number is not None else ""
+
+        grounded_answer = re.sub(r"\[(\d+)\]", remap_reference, answer)
+        grounded_citations = tuple(citations[index] for index in selected_indexes)
+        return grounded_answer, grounded_citations
+
+    @staticmethod
+    def _citation_evidence_lines(
+        citation: Citation,
+        observations: Sequence[Observation],
+    ) -> tuple[str, ...]:
+        evidence: list[str] = []
+        for observation in observations:
+            if observation.tool_name != "read_document" or observation.error:
+                continue
+            result = observation.result
+            if not isinstance(result, dict) or result.get("path") != citation.path:
+                continue
+            start = result.get("start_line")
+            end = result.get("end_line")
+            content = result.get("content")
+            if (
+                not isinstance(start, int)
+                or isinstance(start, bool)
+                or not isinstance(end, int)
+                or isinstance(end, bool)
+                or not isinstance(content, str)
+                or citation.start_line < start
+                or citation.end_line > end
+            ):
+                continue
+
+            numbered_lines: list[str] = []
+            has_line_numbers = False
+            for line in content.splitlines():
+                match = re.match(r"^\s*(\d+):\s?(.*)$", line)
+                if not match:
+                    continue
+                has_line_numbers = True
+                line_number = int(match.group(1))
+                if citation.start_line <= line_number <= citation.end_line:
+                    numbered_lines.append(match.group(2).strip())
+            if has_line_numbers:
+                evidence.extend(numbered_lines)
+            elif citation.start_line == start and citation.end_line == end:
+                evidence.extend(line.strip() for line in content.splitlines())
+        return tuple(evidence)
+
+    @staticmethod
+    def _grounding_tokens(text: str) -> tuple[str, ...]:
+        tokens: list[str] = []
+        for token in re.findall(r"[^\W_]+", text.casefold(), flags=re.UNICODE):
+            if token in _GROUNDING_STOP_WORDS:
+                continue
+            if token.endswith("ization") and len(token) > 9:
+                token = token[:-5]
+            elif token.endswith("ies") and len(token) > 5:
+                token = token[:-3] + "y"
+            elif token.endswith("ing") and len(token) > 6:
+                token = token[:-3]
+                if len(token) > 2 and token[-1] == token[-2] and token[-1] not in "aeiou":
+                    token = token[:-1]
+            elif token.endswith("ed") and len(token) > 5:
+                token = token[:-2]
+                if len(token) > 2 and token[-1] == token[-2] and token[-1] not in "aeiou":
+                    token = token[:-1]
+            elif token.endswith("s") and len(token) > 4:
+                token = token[:-1]
+            if token.endswith("al") and len(token) > 6:
+                token = token[:-2]
+            if token.endswith("e") and len(token) > 5:
+                token = token[:-1]
+            if token not in _GROUNDING_STOP_WORDS:
+                tokens.append(token)
+        return tuple(tokens)
+
+    @classmethod
+    def _claim_matches_lines(
+        cls,
+        claim_tokens: Sequence[str],
+        evidence_lines: Sequence[str],
+    ) -> bool:
+        for line in evidence_lines:
+            evidence_tokens = cls._grounding_tokens(line)
+            if not evidence_tokens or not set(claim_tokens).issubset(evidence_tokens):
+                continue
+            if len(claim_tokens) == 1:
+                return True
+            if any(
+                claim_tokens[index : index + 2]
+                == evidence_tokens[evidence_index : evidence_index + 2]
+                for index in range(len(claim_tokens) - 1)
+                for evidence_index in range(len(evidence_tokens) - 1)
+            ):
+                return True
+        return False
 
     def _authorize_tool_call(
         self,

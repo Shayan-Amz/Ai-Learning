@@ -126,6 +126,18 @@ def test_agent_rejects_an_invalid_planner_action():
     assert "invalid action" in result.answer.casefold()
 
 
+def test_agent_gives_actionable_safe_message_when_local_model_is_unreachable():
+    class UnreachableModel:
+        def choose_next_action(self, goal: str, observations: Sequence[Observation]) -> Action:
+            raise PlannerError("The configured model could not be reached.")
+
+    result = ResearchAgent(UnreachableModel(), ToolRegistry({})).run("Research")
+
+    assert result.stop_reason == "planner_error"
+    assert "make sure it is running" in result.answer
+    assert ".env" in result.answer
+
+
 def test_agent_stops_cleanly_on_a_planner_failure():
     class BrokenPlanner:
         def choose_next_action(self, goal: str, observations: Sequence[Observation]) -> Action:

@@ -193,7 +193,7 @@ def test_extractive_planner_answers_with_no_findings_when_search_is_empty():
     )
 
     assert isinstance(action, FinalAnswer)
-    assert "could not find" in action.text.casefold()
+    assert "no matching passages" in action.text.casefold()
 
 
 def test_agent_rejects_invalid_max_steps():

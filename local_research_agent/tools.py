@@ -16,7 +16,7 @@ MAX_READ_LINES = 40
 MAX_READ_CHARS = 6000
 CHUNK_LINES = 6
 CHUNK_OVERLAP = 2
-_ALLOWED_SUFFIXES = {".md", ".txt"}
+_ALLOWED_SUFFIXES = {".md", ".txt", ".text"}
 _STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "been", "being", "but",
     "by", "can", "could", "do", "does", "for", "from", "had", "has", "have",
