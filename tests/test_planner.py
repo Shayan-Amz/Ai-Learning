@@ -55,6 +55,57 @@ def test_openai_compatible_planner_turns_function_call_into_tool_action(monkeypa
     assert captured["timeout"] == 8
     assert captured["payload"]["tools"]
     assert captured["payload"]["messages"][0]["role"] == "system"
+    system_prompt = captured["payload"]["messages"][0]["content"]
+    assert "Use distinctive terms from the evidence language" in system_prompt
+    assert "answer in the evidence language" in system_prompt
+
+
+def test_openai_compatible_planner_keeps_unicode_evidence_readable(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_post(url, *, headers, json, timeout):
+        captured["payload"] = json
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "search_documents",
+                                        "arguments": '{"query":"DLVO"}',
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr("local_research_agent.planner.httpx.post", fake_post)
+    planner = OpenAICompatiblePlanner("http://127.0.0.1:11434/v1", "local-tool-model")
+
+    planner.choose_next_action(
+        "What does DLVO do?",
+        [
+            Observation(
+                "read_document",
+                {
+                    "path": "nanofluid.md",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "content": "سد انرژی بسیار بلندتر از kT → سوسپانسیون پایدار",
+                },
+            )
+        ],
+    )
+
+    observation_message = captured["payload"]["messages"][-1]["content"]
+    assert "سد انرژی بسیار بلندتر از kT" in observation_message
+    assert "\\u0633" not in observation_message
 
 
 def test_openai_compatible_planner_builds_finish_with_structured_citations(monkeypatch):

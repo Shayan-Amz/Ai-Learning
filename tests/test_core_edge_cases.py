@@ -290,3 +290,69 @@ def test_failed_automatic_read_is_not_repeated():
     assert read_calls == 2
     assert search_calls == 2
     assert sum(item.error is not None for item in result.observations) == 1
+
+
+def test_agent_answers_from_a_bounded_persian_dlvo_section(tmp_path: Path):
+    knowledge_dir = tmp_path / "knowledge"
+    knowledge_dir.mkdir()
+    lines = [f"Introductory line {line}." for line in range(1, 6)]
+    lines.extend(
+        [
+            "## اسلاید ۱۱: نظریه DLVO",
+            "**محتوای اسلاید**",
+            "- **V_total = V_vdW + V_EDL**",
+            "- **V_vdW:** جاذبه واندروالس (همیشه جاذبه بین ذرات یکسان)",
+            "- **V_EDL:** دافعه لایه دوگانه الکتریکی",
+            "- **منحنی انرژی:** کمینه اولیه (تجمع برگشت‌ناپذیر)، سد انرژی، کمینه ثانویه (لخته‌شدن ضعیف و برگشت‌پذیر)",
+            "- سد انرژی بسیار بلندتر از kT → سوسپانسیون پایدار",
+            "**یادداشت گوینده:** DLVO پل ارتباطی بین شیمی آب شور، بار سطحی ذره و پایداری است.",
+            "## اسلاید ۱۲: طول دبای",
+        ]
+    )
+    lines.extend(f"Unrelated background line {line}." for line in range(10))
+    lines.extend(
+        [
+            "## واژه‌نامه",
+            "| نانوسیال | Nanofluid |",
+            "| سوسپانسیون پایدار | Stable suspension |",
+        ]
+    )
+    (knowledge_dir / "nanofluid.md").write_text("\n".join(lines), encoding="utf-8")
+
+    class PersianEvidencePlanner:
+        def choose_next_action(
+            self,
+            goal: str,
+            observations: Sequence[Observation],
+        ) -> Action:
+            if not observations:
+                return ToolCall(
+                    "search_documents",
+                    {"query": "DLVO"},
+                )
+            if observations[-1].tool_name == "search_documents":
+                hit = observations[-1].result[0]
+                return ToolCall(
+                    "read_document",
+                    {
+                        "path": hit["path"],
+                        "start_line": hit["start_line"],
+                        "end_line": hit["end_line"],
+                    },
+                )
+            return FinalAnswer(
+                "V_total = V_vdW + V_EDL [1].\n"
+                "V_vdW: جاذبه واندروالس (همیشه جاذبه بین ذرات یکسان) [1].\n"
+                "V_EDL: دافعه لایه دوگانه الکتریکی [1].\n"
+                "سد انرژی بسیار بلندتر از kT → سوسپانسیون پایدار [1].",
+                (Citation("nanofluid.md", 8, 12),),
+            )
+
+    result = ResearchAgent(
+        PersianEvidencePlanner(),
+        build_read_only_tools(knowledge_dir),
+    ).run("According to the file, what does DLVO do for nanofluid stability?")
+
+    assert result.stop_reason == "finished"
+    assert result.citations == (Citation("nanofluid.md", 8, 12),)
+    assert "سوسپانسیون پایدار" in result.answer

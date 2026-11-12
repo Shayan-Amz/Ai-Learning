@@ -40,6 +40,51 @@ def test_search_returns_empty_for_blank_or_stopword_only_queries(tmp_path: Path)
     assert stopwords.result == []
 
 
+def test_search_expands_a_matching_topic_heading_and_prefers_its_section(tmp_path: Path):
+    knowledge, tools = make_tools(tmp_path)
+    lines = [f"Introductory line {line}." for line in range(1, 6)]
+    lines.extend(
+        [
+            "## اسلاید ۱۱: نظریه DLVO",
+            "**محتوای اسلاید**",
+            "- **V_total = V_vdW + V_EDL**",
+            "- **V_vdW:** جاذبه واندروالس",
+            "- **V_EDL:** دافعه لایه دوگانه الکتریکی",
+            "- سد انرژی بسیار بلندتر از kT → سوسپانسیون پایدار",
+            "## اسلاید ۱۲: طول دبای",
+            "توضیح درباره شوری و طول دبای.",
+            "## واژه‌نامه",
+            "| نانوسیال | Nanofluid |",
+            "| سوسپانسیون پایدار | Stable suspension |",
+        ]
+    )
+    (knowledge / "nanofluid.md").write_text("\n".join(lines), encoding="utf-8")
+
+    observation = tools.execute(ToolCall("search_documents", {"query": "DLVO nanofluid stability"}))
+
+    assert observation.error is None
+    assert observation.result[0]["start_line"] == 6
+    assert observation.result[0]["end_line"] == 11
+    assert "V_total = V_vdW + V_EDL" in observation.result[0]["snippet"]
+    assert "سوسپانسیون پایدار" in observation.result[0]["snippet"]
+
+
+def test_heading_expansion_respects_the_read_line_limit(tmp_path: Path):
+    knowledge, tools = make_tools(tmp_path)
+    lines = ["## DLVO theory", *(f"Section detail {line}." for line in range(1, 60))]
+    (knowledge / "topic.md").write_text("\n".join(lines), encoding="utf-8")
+
+    observation = tools.execute(ToolCall("search_documents", {"query": "DLVO"}))
+
+    assert observation.error is None
+    assert observation.result[0]["start_line"] == 1
+    assert observation.result[0]["end_line"] == MAX_READ_LINES
+    assert (
+        observation.result[0]["end_line"] - observation.result[0]["start_line"] + 1
+        <= MAX_READ_LINES
+    )
+
+
 def test_read_document_supports_line_context_and_default_bounded_read(tmp_path: Path):
     knowledge, tools = make_tools(tmp_path)
     (knowledge / "note.md").write_text(
@@ -47,9 +92,7 @@ def test_read_document_supports_line_context_and_default_bounded_read(tmp_path: 
         encoding="utf-8",
     )
 
-    context = tools.execute(
-        ToolCall("read_document", {"path": "note.md", "line": 1})
-    )
+    context = tools.execute(ToolCall("read_document", {"path": "note.md", "line": 1}))
     default = tools.execute(ToolCall("read_document", {"path": "note.md"}))
 
     assert context.error is None
@@ -61,12 +104,12 @@ def test_read_document_supports_line_context_and_default_bounded_read(tmp_path: 
 
 def test_read_document_rejects_partial_invalid_and_too_wide_ranges(tmp_path: Path):
     knowledge, tools = make_tools(tmp_path)
-    (knowledge / "note.md").write_text("\n".join(f"Line {n}" for n in range(1, 50)), encoding="utf-8")
+    (knowledge / "note.md").write_text(
+        "\n".join(f"Line {n}" for n in range(1, 50)), encoding="utf-8"
+    )
 
     partial = tools.execute(ToolCall("read_document", {"path": "note.md", "start_line": 2}))
-    not_integer = tools.execute(
-        ToolCall("read_document", {"path": "note.md", "line": "second"})
-    )
+    not_integer = tools.execute(ToolCall("read_document", {"path": "note.md", "line": "second"}))
     boolean = tools.execute(ToolCall("read_document", {"path": "note.md", "line": True}))
     wide = tools.execute(
         ToolCall(
@@ -85,9 +128,7 @@ def test_read_document_rejects_absolute_paths_hidden_files_and_missing_files(tmp
     knowledge, tools = make_tools(tmp_path)
     (knowledge / ".hidden.md").write_text("hidden", encoding="utf-8")
     absolute = tools.execute(ToolCall("read_document", {"path": str(knowledge / ".hidden.md")}))
-    windows_absolute = tools.execute(
-        ToolCall("read_document", {"path": "C:\\Users\\private.md"})
-    )
+    windows_absolute = tools.execute(ToolCall("read_document", {"path": "C:\\Users\\private.md"}))
     hidden = tools.execute(ToolCall("read_document", {"path": ".hidden.md"}))
     missing = tools.execute(ToolCall("read_document", {"path": "missing.md"}))
 

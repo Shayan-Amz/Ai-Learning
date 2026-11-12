@@ -16,17 +16,81 @@ MAX_READ_LINES = 40
 MAX_READ_CHARS = 6000
 CHUNK_LINES = 6
 CHUNK_OVERLAP = 2
+# Give rare topic terms in headings extra weight without overranking common headings.
+_HEADING_MATCH_IDF_MULTIPLIER = 1.5
+_ACRONYM_HEADING_BONUS = 1.0
 _ALLOWED_SUFFIXES = {".md", ".txt", ".text"}
 _STOP_WORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "been", "being", "but",
-    "by", "can", "could", "do", "does", "for", "from", "had", "has", "have",
-    "how", "i", "if", "in", "into", "is", "it", "its", "me", "my", "of",
-    "on", "or", "our", "please", "should", "that", "the", "their", "them",
-    "there", "these", "they", "this", "to", "was", "we", "were", "what",
-    "when", "where", "which", "who", "why", "will", "with", "would", "you",
-    "your", "find", "tell", "show", "local", "document", "documents", "note",
-    "notes", "about",
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "been",
+    "being",
+    "but",
+    "by",
+    "can",
+    "could",
+    "do",
+    "does",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "how",
+    "i",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "me",
+    "my",
+    "of",
+    "on",
+    "or",
+    "our",
+    "please",
+    "should",
+    "that",
+    "the",
+    "their",
+    "them",
+    "there",
+    "these",
+    "they",
+    "this",
+    "to",
+    "was",
+    "we",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "will",
+    "with",
+    "would",
+    "you",
+    "your",
+    "find",
+    "tell",
+    "show",
+    "local",
+    "document",
+    "documents",
+    "note",
+    "notes",
+    "about",
 }
+_MARKDOWN_HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$")
 
 
 def build_read_only_tools(knowledge_dir: Path) -> ToolRegistry:
@@ -131,6 +195,53 @@ def _make_chunks(text: str) -> list[tuple[int, int, str]]:
     return chunks
 
 
+def _matching_heading_section(
+    lines: list[str],
+    start_line: int,
+    end_line: int,
+    query_terms: set[str],
+) -> tuple[int, int, str, frozenset[str], frozenset[str]] | None:
+    """Expand a matching Markdown heading to its bounded section body."""
+    matches: list[tuple[int, int, int, frozenset[str], frozenset[str]]] = []
+    for line_number in range(start_line, end_line + 1):
+        heading = _MARKDOWN_HEADING_RE.match(lines[line_number - 1])
+        if heading is None:
+            continue
+        heading_text = heading.group(2)
+        matching_terms = frozenset(query_terms.intersection(_tokens(heading_text)))
+        if matching_terms:
+            acronym_terms = frozenset(
+                token.casefold()
+                for token in re.findall(r"(?<!\w)[A-Z][A-Z0-9]{1,}(?!\w)", heading_text)
+            )
+            matches.append(
+                (
+                    len(matching_terms),
+                    line_number,
+                    len(heading.group(1)),
+                    matching_terms,
+                    matching_terms.intersection(acronym_terms),
+                )
+            )
+
+    if not matches:
+        return None
+
+    _, heading_line, heading_level, matched_terms, acronym_terms = max(
+        matches,
+        key=lambda item: (item[0], -item[1]),
+    )
+    bounded_end = min(len(lines), heading_line + MAX_READ_LINES - 1)
+    for line_number in range(heading_line + 1, bounded_end + 1):
+        heading = _MARKDOWN_HEADING_RE.match(lines[line_number - 1])
+        if heading is not None and len(heading.group(1)) <= heading_level:
+            bounded_end = line_number - 1
+            break
+
+    section_text = "\n".join(lines[heading_line - 1 : bounded_end]).strip()
+    return heading_line, bounded_end, section_text, matched_terms, acronym_terms
+
+
 def _search_documents(root: Path, arguments: dict[str, object]) -> list[dict[str, object]]:
     query = _required_text(arguments, "query")
     if len(query) > 1000:
@@ -138,6 +249,7 @@ def _search_documents(root: Path, arguments: dict[str, object]) -> list[dict[str
     query_tokens = _tokens(query)
     if not query_tokens:
         return []
+    query_terms = set(query_tokens)
 
     chunks: list[dict[str, object]] = []
     total_bytes = 0
@@ -151,6 +263,7 @@ def _search_documents(root: Path, arguments: dict[str, object]) -> list[dict[str
         if total_bytes > MAX_SEARCH_TOTAL_BYTES:
             raise ToolError("The approved knowledge folder exceeds the 50 MiB search limit.")
         text = _read_utf8(file_path)
+        lines = text.splitlines()
         for start_line, end_line, chunk_text in _make_chunks(text):
             tokens = _tokens(chunk_text)
             if tokens:
@@ -162,6 +275,12 @@ def _search_documents(root: Path, arguments: dict[str, object]) -> list[dict[str
                         "text": chunk_text,
                         "tokens": tokens,
                         "frequencies": Counter(tokens),
+                        "heading_context": _matching_heading_section(
+                            lines,
+                            start_line,
+                            end_line,
+                            query_terms,
+                        ),
                     }
                 )
 
@@ -173,7 +292,6 @@ def _search_documents(root: Path, arguments: dict[str, object]) -> list[dict[str
         document_frequency.update(set(chunk["tokens"]))
     average_length = sum(len(chunk["tokens"]) for chunk in chunks) / len(chunks)
     average_length = max(average_length, 1.0)
-    query_terms = set(query_tokens)
     phrase = " ".join(query_tokens)
     scored: list[tuple[float, dict[str, object]]] = []
 
@@ -194,8 +312,35 @@ def _search_documents(root: Path, arguments: dict[str, object]) -> list[dict[str
         normalized_text = " ".join(chunk["tokens"])
         if phrase and phrase in normalized_text:
             score += 1.0
+
+        result_chunk = chunk
+        heading_context = chunk["heading_context"]
+        if heading_context is not None:
+            (
+                heading_start,
+                heading_end,
+                section_text,
+                matching_heading_terms,
+                acronym_heading_terms,
+            ) = heading_context
+            result_chunk = {
+                **chunk,
+                "start_line": heading_start,
+                "end_line": heading_end,
+                "text": section_text,
+            }
+            score += _HEADING_MATCH_IDF_MULTIPLIER * sum(
+                math.log(
+                    1.0
+                    + (len(chunks) - document_frequency[term] + 0.5)
+                    / (document_frequency[term] + 0.5)
+                )
+                for term in matching_heading_terms
+            )
+            score += _ACRONYM_HEADING_BONUS * len(acronym_heading_terms)
+
         if score > 0:
-            scored.append((score, chunk))
+            scored.append((score, result_chunk))
 
     scored.sort(
         key=lambda item: (
@@ -252,7 +397,9 @@ def _read_document(root: Path, arguments: dict[str, object]) -> dict[str, object
         safe_path.stat()
     except OSError as error:
         if error.errno == getattr(errno, "ELOOP", -1):
-            raise ToolError("Could not resolve document path inside the approved folder.") from error
+            raise ToolError(
+                "Could not resolve document path inside the approved folder."
+            ) from error
         if error.errno in {errno.ENOENT, errno.ENOTDIR}:
             raise ToolError("Document does not exist.") from error
         raise ToolError("Could not read a local text document.") from error
