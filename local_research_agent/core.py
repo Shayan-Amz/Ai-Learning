@@ -280,6 +280,7 @@ class ResearchAgent:
 
         observations: list[Observation] = []
         grounding_retry_used = False
+        grounding_retry_search_attempted = False
         grounding_retry_read_attempted = False
         for _ in range(self._max_steps + 2):
             try:
@@ -295,21 +296,35 @@ class ResearchAgent:
             if isinstance(action, FinalAnswer):
                 if (
                     grounding_retry_used
-                    and not grounding_retry_read_attempted
                     and not self._has_new_read_after_grounding_feedback(observations)
                     and len(observations) < self._max_steps
                 ):
-                    additional_read = self._next_unread_search_result(observations)
-                    if additional_read is not None:
-                        grounding_retry_read_attempted = True
+                    if not grounding_retry_read_attempted:
+                        additional_read = self._next_unread_search_result(observations)
+                        if additional_read is not None:
+                            grounding_retry_read_attempted = True
+                            authorization_error = self._authorize_tool_call(
+                                additional_read,
+                                observations,
+                            )
+                            observations.append(
+                                authorization_error
+                                if authorization_error
+                                else self._tools.execute(additional_read)
+                            )
+                            continue
+
+                    if not grounding_retry_search_attempted:
+                        grounding_retry_search_attempted = True
+                        retry_search = ToolCall("search_documents", {"query": goal})
                         authorization_error = self._authorize_tool_call(
-                            additional_read,
+                            retry_search,
                             observations,
                         )
                         observations.append(
                             authorization_error
                             if authorization_error
-                            else self._tools.execute(additional_read)
+                            else self._tools.execute(retry_search)
                         )
                         continue
 
@@ -319,15 +334,24 @@ class ResearchAgent:
                     and not grounding_retry_used
                     and len(observations) + 2 < self._max_steps
                 ):
-                    observations.append(
-                        Observation(
-                            tool_name="answer_validation",
-                            result=(
-                                "The previous answer did not match its cited text. Search for or "
-                                "read another passage; do not repeat unsupported claims."
-                            ),
-                        )
+                    valid_citations = self._validate_citations(action.citations, observations)
+                    _, rejection_detail = self._ground_answer_with_failure(
+                        action.text,
+                        valid_citations,
+                        observations,
                     )
+                    feedback = (
+                        "The previous answer failed grounding. "
+                        + (
+                            rejection_detail
+                            or "A factual claim did not match the cited source text."
+                        )
+                        + " Search once with specific terms from the source language or read a "
+                        "different, previously unread passage. Do not reread the same path and "
+                        "line range. If the source language differs from the question, preserve "
+                        "the source wording and do not repeat unsupported claims."
+                    )
+                    observations.append(Observation(tool_name="answer_validation", result=feedback))
                     grounding_retry_used = True
                     continue
                 return result
@@ -347,6 +371,65 @@ class ResearchAgent:
                     stop_reason="max_steps",
                     citations=self._fallback_citations(observations),
                 )
+
+            if grounding_retry_used and action.name == "read_document":
+                unread_action = self._read_call_for_unread_lines(action, observations)
+                if unread_action is None:
+                    if not self._has_new_read_after_grounding_feedback(observations):
+                        if not grounding_retry_read_attempted:
+                            alternative_read = self._next_unread_search_result(observations)
+                            if alternative_read is not None:
+                                grounding_retry_read_attempted = True
+                                authorization_error = self._authorize_tool_call(
+                                    alternative_read,
+                                    observations,
+                                )
+                                observations.append(
+                                    authorization_error
+                                    if authorization_error
+                                    else self._tools.execute(alternative_read)
+                                )
+                                continue
+
+                        if not grounding_retry_search_attempted:
+                            grounding_retry_search_attempted = True
+                            retry_search = ToolCall("search_documents", {"query": goal})
+                            authorization_error = self._authorize_tool_call(
+                                retry_search,
+                                observations,
+                            )
+                            observations.append(
+                                authorization_error
+                                if authorization_error
+                                else self._tools.execute(retry_search)
+                            )
+                            continue
+
+                    observations.append(
+                        Observation(
+                            tool_name=action.name,
+                            error=(
+                                "This line range was already read. Choose a different unread "
+                                "passage or finish with supported claims."
+                            ),
+                        )
+                    )
+                    continue
+                action = unread_action
+
+            if grounding_retry_used and action.name == "search_documents":
+                if grounding_retry_search_attempted:
+                    observations.append(
+                        Observation(
+                            tool_name=action.name,
+                            error=(
+                                "The one bounded grounding-retry search was already used. "
+                                "Read an available result or finish."
+                            ),
+                        )
+                    )
+                    continue
+                grounding_retry_search_attempted = True
 
             authorization_error = self._authorize_tool_call(action, observations)
             if authorization_error:
@@ -542,6 +625,54 @@ class ResearchAgent:
         return (cursor, end) if cursor <= end else None
 
     @classmethod
+    def _read_call_for_unread_lines(
+        cls,
+        call: ToolCall,
+        observations: Sequence[Observation],
+    ) -> ToolCall | None:
+        """Trim a retried read to unread lines, or return None when fully covered."""
+        if call.name != "read_document":
+            return call
+        path = call.arguments.get("path")
+        start = call.arguments.get("start_line")
+        end = call.arguments.get("end_line")
+        if start is None and end is None:
+            line = call.arguments.get("line")
+            if isinstance(line, int) and not isinstance(line, bool):
+                start, end = max(1, line - 2), line + 2
+            elif line is None:
+                start, end = 1, 40
+            else:
+                return call
+        if (
+            not isinstance(path, str)
+            or not isinstance(start, int)
+            or isinstance(start, bool)
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or start < 1
+            or end < start
+            or end - start + 1 > 40
+        ):
+            return call
+
+        unread_range = cls._first_unread_range(
+            path,
+            start,
+            end,
+            cls._successful_read_ranges(observations),
+        )
+        if unread_range is None:
+            return None
+        if unread_range == (start, end):
+            return call
+
+        arguments = dict(call.arguments)
+        arguments.pop("line", None)
+        arguments["start_line"], arguments["end_line"] = unread_range
+        return ToolCall(call.name, arguments)
+
+    @classmethod
     def _has_new_read_after_grounding_feedback(
         cls,
         observations: Sequence[Observation],
@@ -559,7 +690,7 @@ class ResearchAgent:
 
         retry_observations = observations[feedback_index + 1 :]
         earlier_reads = cls._successful_read_ranges(observations[:feedback_index])
-        search_ranges = cls._search_result_ranges(retry_observations)
+        search_ranges = cls._search_result_ranges(observations)
         later_reads = cls._successful_read_ranges(retry_observations)
         for read_path, read_start, read_end in later_reads:
             for search_path, search_start, search_end in search_ranges:
@@ -584,20 +715,12 @@ class ResearchAgent:
         cls,
         observations: Sequence[Observation],
     ) -> ToolCall | None:
-        feedback_index = next(
-            (
-                index
-                for index in range(len(observations) - 1, -1, -1)
-                if observations[index].tool_name == "answer_validation"
-            ),
-            None,
-        )
-        if feedback_index is None:
+        if not any(item.tool_name == "answer_validation" for item in observations):
             return None
 
         read_ranges = cls._successful_read_ranges(observations)
         partially_unread_candidate: ToolCall | None = None
-        for observation in reversed(observations[feedback_index + 1 :]):
+        for observation in reversed(observations):
             if (
                 observation.tool_name != "search_documents"
                 or observation.error
@@ -626,7 +749,11 @@ class ResearchAgent:
                     continue
                 candidate = ToolCall(
                     "read_document",
-                    {"path": path, "start_line": start, "end_line": end},
+                    {
+                        "path": path,
+                        "start_line": unread_range[0],
+                        "end_line": unread_range[1],
+                    },
                 )
                 if unread_range == (start, end):
                     return candidate
@@ -642,19 +769,28 @@ class ResearchAgent:
         observations: Sequence[Observation],
     ) -> tuple[str, tuple[Citation, ...]] | None:
         """Keep an answer only when each sentence matches its cited source text."""
+        grounded_answer, _ = cls._ground_answer_with_failure(answer, citations, observations)
+        return grounded_answer
+
+    @classmethod
+    def _ground_answer_with_failure(
+        cls,
+        answer: str,
+        citations: Sequence[Citation],
+        observations: Sequence[Observation],
+    ) -> tuple[tuple[str, tuple[Citation, ...]] | None, str | None]:
         evidence_by_citation = [
             cls._citation_evidence_lines(citation, observations) for citation in citations
         ]
         if not evidence_by_citation or not any(evidence_by_citation):
-            return None
+            return None, "No readable lines were available for the cited passages."
 
         source_footer = re.search(r"(?im)^\s*Sources:.*$", answer)
         if source_footer:
             answer = answer[: source_footer.start()].rstrip()
-        answer_body = answer
         sentences = re.split(
             r"\n+|(?<=[!?;])\s+|(?<!\d)\.\s+",
-            answer_body,
+            answer,
         )
         used_citations: set[int] = set()
         checked_claim = False
@@ -671,10 +807,16 @@ class ResearchAgent:
             if references:
                 referenced = set(references)
                 if any(index < 0 or index >= len(evidence_by_citation) for index in referenced):
-                    return None
+                    return None, cls._grounding_failure_detail(
+                        claim,
+                        "The claim references a citation number that does not exist.",
+                    )
                 for index in referenced:
                     if not cls._claim_matches_lines(claim_tokens, evidence_by_citation[index]):
-                        return None
+                        return None, cls._grounding_failure_detail(
+                            claim,
+                            f"The cited lines did not match citation [{index + 1}].",
+                        )
                     used_citations.add(index)
                 continue
 
@@ -684,11 +826,14 @@ class ResearchAgent:
                 if cls._claim_matches_lines(claim_tokens, lines)
             ]
             if not matching:
-                return None
+                return None, cls._grounding_failure_detail(
+                    claim,
+                    "No cited lines matched this claim.",
+                )
             used_citations.update(matching)
 
         if not checked_claim or not used_citations:
-            return None
+            return None, "No checkable factual claim was matched to its citations."
 
         selected_indexes = sorted(used_citations)
         citation_numbers = {
@@ -702,7 +847,14 @@ class ResearchAgent:
 
         grounded_answer = re.sub(r"\[(\d+)\]", remap_reference, answer)
         grounded_citations = tuple(citations[index] for index in selected_indexes)
-        return grounded_answer, grounded_citations
+        return (grounded_answer, grounded_citations), None
+
+    @staticmethod
+    def _grounding_failure_detail(claim: str, reason: str) -> str:
+        compact_claim = " ".join(claim.split())[:240]
+        if not compact_claim:
+            return reason
+        return f"{reason} Rejected draft claim (not evidence): {compact_claim!r}."
 
     @staticmethod
     def _citation_evidence_lines(

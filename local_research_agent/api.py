@@ -480,7 +480,12 @@ def _trace_items(result: AgentResult) -> list[TraceItem]:
             blocked_terms = ("not registered", "escapes", "must be returned", "must search")
             state = "blocked" if any(term in detail.casefold() for term in blocked_terms) else "error"
         elif observation.tool_name == "answer_validation":
-            detail = "The answer did not match its cited lines; the agent is checking other evidence."
+            detail = (
+                str(observation.result)
+                if isinstance(observation.result, str)
+                else "The answer did not match its cited lines; the agent is checking other evidence."
+            )
+            detail = detail[:500]
             state = "blocked"
         elif observation.tool_name == "search_documents":
             count = len(observation.result) if isinstance(observation.result, list) else 0

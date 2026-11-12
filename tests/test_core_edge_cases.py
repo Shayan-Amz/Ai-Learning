@@ -219,6 +219,153 @@ def test_agent_retries_after_ungrounded_answer_and_forces_another_read(tmp_path:
     ]
 
 
+def test_grounding_retry_reports_the_rejected_claim_and_never_repeats_a_read():
+    search_calls = 0
+    read_ranges: list[tuple[int, int]] = []
+
+    def search(arguments: dict[str, object]) -> list[dict[str, object]]:
+        nonlocal search_calls
+        search_calls += 1
+        return [{"path": "nanofluid.md", "start_line": 1, "end_line": 2}]
+
+    def read(arguments: dict[str, object]) -> dict[str, object]:
+        start = int(arguments["start_line"])
+        end = int(arguments["end_line"])
+        read_ranges.append((start, end))
+        return {
+            "path": "nanofluid.md",
+            "start_line": start,
+            "end_line": end,
+            "content": "1: Slide title: DLVO\n2: Colloidal interactions are discussed.",
+        }
+
+    tools = ToolRegistry({"search_documents": search, "read_document": read})
+    rejected_answer = FinalAnswer(
+        "DLVO improves electrostatic stabilization [1].",
+        (Citation("nanofluid.md", 1, 2),),
+    )
+
+    class RepeatsReadPlanner:
+        def choose_next_action(
+            self,
+            goal: str,
+            observations: Sequence[Observation],
+        ) -> Action:
+            feedback_index = next(
+                (
+                    index
+                    for index, item in enumerate(observations)
+                    if item.tool_name == "answer_validation"
+                ),
+                None,
+            )
+            if not observations:
+                return ToolCall("search_documents", {"query": goal})
+            if feedback_index is None:
+                if observations[-1].tool_name == "search_documents":
+                    return ToolCall(
+                        "read_document",
+                        {"path": "nanofluid.md", "start_line": 1, "end_line": 2},
+                    )
+                return rejected_answer
+            if not any(
+                item.tool_name == "search_documents" for item in observations[feedback_index + 1 :]
+            ):
+                return ToolCall(
+                    "read_document",
+                    {"path": "nanofluid.md", "start_line": 1, "end_line": 2},
+                )
+            return rejected_answer
+
+    result = ResearchAgent(RepeatsReadPlanner(), tools).run("What role does DLVO play?")
+
+    assert result.stop_reason == "ungrounded_answer"
+    assert read_ranges == [(1, 2)]
+    assert search_calls == 2
+    feedback = next(item for item in result.observations if item.tool_name == "answer_validation")
+    assert isinstance(feedback.result, str)
+    assert "Rejected draft claim" in feedback.result
+    assert "DLVO improves electrostatic stabilization" in feedback.result
+    assert [item.tool_name for item in result.observations] == [
+        "search_documents",
+        "read_document",
+        "answer_validation",
+        "search_documents",
+    ]
+
+
+def test_grounding_retry_trims_overlapping_reads_to_unread_lines():
+    read_ranges: list[tuple[int, int]] = []
+
+    def search(arguments: dict[str, object]) -> list[dict[str, object]]:
+        return [{"path": "nanofluid.md", "start_line": 1, "end_line": 3}]
+
+    def read(arguments: dict[str, object]) -> dict[str, object]:
+        start = int(arguments["start_line"])
+        end = int(arguments["end_line"])
+        read_ranges.append((start, end))
+        lines = {
+            1: "Slide title: DLVO",
+            2: "The source discusses colloidal interactions.",
+            3: "DLVO interactions support nanofluid stability directly.",
+        }
+        return {
+            "path": "nanofluid.md",
+            "start_line": start,
+            "end_line": end,
+            "content": "\n".join(f"{number}: {lines[number]}" for number in range(start, end + 1)),
+        }
+
+    class PartialOverlapPlanner:
+        def choose_next_action(
+            self,
+            goal: str,
+            observations: Sequence[Observation],
+        ) -> Action:
+            feedback_index = next(
+                (
+                    index
+                    for index, item in enumerate(observations)
+                    if item.tool_name == "answer_validation"
+                ),
+                None,
+            )
+            if not observations:
+                return ToolCall("search_documents", {"query": goal})
+            if feedback_index is None:
+                if observations[-1].tool_name == "search_documents":
+                    return ToolCall(
+                        "read_document",
+                        {"path": "nanofluid.md", "start_line": 1, "end_line": 2},
+                    )
+                return FinalAnswer(
+                    "DLVO improves electrostatic stabilization [1].",
+                    (Citation("nanofluid.md", 1, 2),),
+                )
+            has_retry_read = any(
+                item.tool_name == "read_document" and not item.error
+                for item in observations[feedback_index + 1 :]
+            )
+            if not has_retry_read:
+                return ToolCall(
+                    "read_document",
+                    {"path": "nanofluid.md", "start_line": 1, "end_line": 3},
+                )
+            return FinalAnswer(
+                "DLVO interactions support nanofluid stability directly [1].",
+                (Citation("nanofluid.md", 3, 3),),
+            )
+
+    result = ResearchAgent(
+        PartialOverlapPlanner(),
+        ToolRegistry({"search_documents": search, "read_document": read}),
+    ).run("What role does DLVO play?")
+
+    assert result.stop_reason == "finished"
+    assert read_ranges == [(1, 2), (3, 3)]
+    assert result.citations == (Citation("nanofluid.md", 3, 3),)
+
+
 def test_failed_automatic_read_is_not_repeated():
     search_calls = 0
     read_calls = 0
