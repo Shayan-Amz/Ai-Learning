@@ -154,7 +154,7 @@ def test_agent_stops_cleanly_on_a_planner_failure():
     assert "provider internals" not in result.answer
 
 
-def test_agent_retries_after_ungrounded_answer_and_forces_another_read(tmp_path: Path):
+def test_agent_retries_after_ungrounded_answer_with_new_evidence(tmp_path: Path):
     knowledge_dir = tmp_path / "knowledge"
     knowledge_dir.mkdir()
     (knowledge_dir / "nanofluid.md").write_text(
@@ -199,6 +199,11 @@ def test_agent_retries_after_ungrounded_answer_and_forces_another_read(tmp_path:
                     "search_documents",
                     {"query": "DLVO nanofluid stability"},
                 )
+            if not any(item.tool_name == "read_document" for item in observations_after_feedback):
+                return ToolCall(
+                    "read_document",
+                    {"path": "nanofluid.md", "start_line": 2, "end_line": 2},
+                )
             return FinalAnswer(
                 "DLVO interactions support nanofluid stability by balancing attractive and "
                 "repulsive forces [1].",
@@ -217,6 +222,74 @@ def test_agent_retries_after_ungrounded_answer_and_forces_another_read(tmp_path:
         "search_documents",
         "read_document",
     ]
+
+
+def test_agent_corrects_mixed_language_claim_from_already_read_source_text():
+    search_calls = 0
+    read_calls = 0
+    source_line = "DLVO پل ارتباطی بین شیمی آب شور، بار سطحی ذره و پایداری است."
+
+    def search(arguments: dict[str, object]) -> list[dict[str, object]]:
+        nonlocal search_calls
+        search_calls += 1
+        return [{"path": "nanofluid.md", "start_line": 1, "end_line": 1}]
+
+    def read(arguments: dict[str, object]) -> dict[str, object]:
+        nonlocal read_calls
+        read_calls += 1
+        return {
+            "path": "nanofluid.md",
+            "start_line": 1,
+            "end_line": 1,
+            "content": f"1: {source_line}",
+        }
+
+    rejected_answer = FinalAnswer(
+        "According to the file, DLVO (دینامیک لایه دوگانه الکتریکی واندروالس) plays a role "
+        "in nanofluid stability as a theoretical framework linking salt-water chemistry, "
+        "particle surface charge, and stability [1].",
+        (Citation("nanofluid.md", 1, 1),),
+    )
+    corrected_answer = FinalAnswer(
+        f"{source_line} [1].",
+        (Citation("nanofluid.md", 1, 1),),
+    )
+
+    class MixedLanguagePlanner:
+        def choose_next_action(
+            self,
+            goal: str,
+            observations: Sequence[Observation],
+        ) -> Action:
+            if not observations:
+                return ToolCall("search_documents", {"query": goal})
+            if observations[-1].tool_name == "search_documents":
+                return ToolCall(
+                    "read_document",
+                    {"path": "nanofluid.md", "start_line": 1, "end_line": 1},
+                )
+            if any(item.tool_name == "answer_validation" for item in observations):
+                return corrected_answer
+            return rejected_answer
+
+    result = ResearchAgent(
+        MixedLanguagePlanner(),
+        ToolRegistry({"search_documents": search, "read_document": read}),
+    ).run("According to the file, what role does DLVO play in nanofluid stability?")
+
+    assert result.stop_reason == "finished"
+    assert result.answer == f"{source_line} [1]."
+    assert result.citations == (Citation("nanofluid.md", 1, 1),)
+    assert search_calls == 1
+    assert read_calls == 1
+    assert [item.tool_name for item in result.observations] == [
+        "search_documents",
+        "read_document",
+        "answer_validation",
+    ]
+    feedback = result.observations[-1]
+    assert isinstance(feedback.result, str)
+    assert "دینامیک لایه دوگانه الکتریکی واندروالس" in feedback.result
 
 
 def test_grounding_retry_reports_the_rejected_claim_and_never_repeats_a_read():
@@ -268,20 +341,19 @@ def test_grounding_retry_reports_the_rejected_claim_and_never_repeats_a_read():
                         {"path": "nanofluid.md", "start_line": 1, "end_line": 2},
                     )
                 return rejected_answer
-            if not any(
-                item.tool_name == "search_documents" for item in observations[feedback_index + 1 :]
-            ):
-                return ToolCall(
-                    "read_document",
-                    {"path": "nanofluid.md", "start_line": 1, "end_line": 2},
-                )
-            return rejected_answer
+            retry_observations = observations[feedback_index + 1 :]
+            if any(item.error for item in retry_observations):
+                return rejected_answer
+            return ToolCall(
+                "read_document",
+                {"path": "nanofluid.md", "start_line": 1, "end_line": 2},
+            )
 
     result = ResearchAgent(RepeatsReadPlanner(), tools).run("What role does DLVO play?")
 
     assert result.stop_reason == "ungrounded_answer"
     assert read_ranges == [(1, 2)]
-    assert search_calls == 2
+    assert search_calls == 1
     feedback = next(item for item in result.observations if item.tool_name == "answer_validation")
     assert isinstance(feedback.result, str)
     assert "Rejected draft claim" in feedback.result
@@ -290,8 +362,12 @@ def test_grounding_retry_reports_the_rejected_claim_and_never_repeats_a_read():
         "search_documents",
         "read_document",
         "answer_validation",
-        "search_documents",
+        "read_document",
     ]
+    assert result.observations[-1].error == (
+        "This line range was already read. Use the existing evidence or search once for a "
+        "different passage; do not repeat this read."
+    )
 
 
 def test_grounding_retry_trims_overlapping_reads_to_unread_lines():
@@ -366,7 +442,7 @@ def test_grounding_retry_trims_overlapping_reads_to_unread_lines():
     assert result.citations == (Citation("nanofluid.md", 3, 3),)
 
 
-def test_failed_automatic_read_is_not_repeated():
+def test_failed_retry_read_does_not_ground_the_answer():
     search_calls = 0
     read_calls = 0
 
@@ -422,10 +498,14 @@ def test_failed_automatic_read_is_not_repeated():
                     "DLVO theory improves electrostatic stabilization [1].",
                     (Citation("nanofluid.md", 1, 1),),
                 )
-            if not any(
-                item.tool_name == "search_documents" for item in observations[feedback_index + 1 :]
-            ):
+            retry_observations = observations[feedback_index + 1 :]
+            if not any(item.tool_name == "search_documents" for item in retry_observations):
                 return ToolCall("search_documents", {"query": "DLVO stability"})
+            if not any(item.tool_name == "read_document" for item in retry_observations):
+                return ToolCall(
+                    "read_document",
+                    {"path": "nanofluid.md", "start_line": 2, "end_line": 2},
+                )
             return FinalAnswer(
                 "DLVO theory improves electrostatic stabilization [1].",
                 (Citation("nanofluid.md", 1, 1),),

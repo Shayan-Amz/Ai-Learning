@@ -281,7 +281,6 @@ class ResearchAgent:
         observations: list[Observation] = []
         grounding_retry_used = False
         grounding_retry_search_attempted = False
-        grounding_retry_read_attempted = False
         for _ in range(self._max_steps + 2):
             try:
                 action = self._planner.choose_next_action(goal, tuple(observations))
@@ -294,40 +293,6 @@ class ResearchAgent:
                 )
 
             if isinstance(action, FinalAnswer):
-                if (
-                    grounding_retry_used
-                    and not self._has_new_read_after_grounding_feedback(observations)
-                    and len(observations) < self._max_steps
-                ):
-                    if not grounding_retry_read_attempted:
-                        additional_read = self._next_unread_search_result(observations)
-                        if additional_read is not None:
-                            grounding_retry_read_attempted = True
-                            authorization_error = self._authorize_tool_call(
-                                additional_read,
-                                observations,
-                            )
-                            observations.append(
-                                authorization_error
-                                if authorization_error
-                                else self._tools.execute(additional_read)
-                            )
-                            continue
-
-                    if not grounding_retry_search_attempted:
-                        grounding_retry_search_attempted = True
-                        retry_search = ToolCall("search_documents", {"query": goal})
-                        authorization_error = self._authorize_tool_call(
-                            retry_search,
-                            observations,
-                        )
-                        observations.append(
-                            authorization_error
-                            if authorization_error
-                            else self._tools.execute(retry_search)
-                        )
-                        continue
-
                 result = self._finish(action, observations)
                 if (
                     result.stop_reason == "ungrounded_answer"
@@ -346,10 +311,13 @@ class ResearchAgent:
                             rejection_detail
                             or "A factual claim did not match the cited source text."
                         )
-                        + " Search once with specific terms from the source language or read a "
-                        "different, previously unread passage. Do not reread the same path and "
-                        "line range. If the source language differs from the question, preserve "
-                        "the source wording and do not repeat unsupported claims."
+                        + " First inspect the passages already read. If one directly answers the "
+                        "question, correct the draft using one short, exact quotation in the source "
+                        "language and cite its exact lines; do not translate it or expand an acronym "
+                        "unless the source does so. Search once with distinctive source-language "
+                        "terms only if the read evidence is insufficient, then read a different "
+                        "passage before relying on it. Never reread the same path and line range. "
+                        "If evidence is insufficient, say so instead of guessing."
                     )
                     observations.append(Observation(tool_name="answer_validation", result=feedback))
                     grounding_retry_used = True
@@ -375,42 +343,12 @@ class ResearchAgent:
             if grounding_retry_used and action.name == "read_document":
                 unread_action = self._read_call_for_unread_lines(action, observations)
                 if unread_action is None:
-                    if not self._has_new_read_after_grounding_feedback(observations):
-                        if not grounding_retry_read_attempted:
-                            alternative_read = self._next_unread_search_result(observations)
-                            if alternative_read is not None:
-                                grounding_retry_read_attempted = True
-                                authorization_error = self._authorize_tool_call(
-                                    alternative_read,
-                                    observations,
-                                )
-                                observations.append(
-                                    authorization_error
-                                    if authorization_error
-                                    else self._tools.execute(alternative_read)
-                                )
-                                continue
-
-                        if not grounding_retry_search_attempted:
-                            grounding_retry_search_attempted = True
-                            retry_search = ToolCall("search_documents", {"query": goal})
-                            authorization_error = self._authorize_tool_call(
-                                retry_search,
-                                observations,
-                            )
-                            observations.append(
-                                authorization_error
-                                if authorization_error
-                                else self._tools.execute(retry_search)
-                            )
-                            continue
-
                     observations.append(
                         Observation(
                             tool_name=action.name,
                             error=(
-                                "This line range was already read. Choose a different unread "
-                                "passage or finish with supported claims."
+                                "This line range was already read. Use the existing evidence or "
+                                "search once for a different passage; do not repeat this read."
                             ),
                         )
                     )
@@ -573,37 +511,6 @@ class ResearchAgent:
         return ranges
 
     @staticmethod
-    def _search_result_ranges(
-        observations: Sequence[Observation],
-    ) -> list[tuple[str, int, int]]:
-        ranges: list[tuple[str, int, int]] = []
-        for observation in observations:
-            if (
-                observation.tool_name != "search_documents"
-                or observation.error
-                or not isinstance(observation.result, list)
-            ):
-                continue
-            for result in observation.result:
-                if not isinstance(result, dict):
-                    continue
-                path = result.get("path")
-                start = result.get("start_line")
-                end = result.get("end_line")
-                if (
-                    isinstance(path, str)
-                    and isinstance(start, int)
-                    and not isinstance(start, bool)
-                    and isinstance(end, int)
-                    and not isinstance(end, bool)
-                    and start >= 1
-                    and end >= start
-                    and end - start + 1 <= 40
-                ):
-                    ranges.append((path, start, end))
-        return ranges
-
-    @staticmethod
     def _first_unread_range(
         path: str,
         start: int,
@@ -673,95 +580,6 @@ class ResearchAgent:
         return ToolCall(call.name, arguments)
 
     @classmethod
-    def _has_new_read_after_grounding_feedback(
-        cls,
-        observations: Sequence[Observation],
-    ) -> bool:
-        feedback_index = next(
-            (
-                index
-                for index in range(len(observations) - 1, -1, -1)
-                if observations[index].tool_name == "answer_validation"
-            ),
-            None,
-        )
-        if feedback_index is None:
-            return False
-
-        retry_observations = observations[feedback_index + 1 :]
-        earlier_reads = cls._successful_read_ranges(observations[:feedback_index])
-        search_ranges = cls._search_result_ranges(observations)
-        later_reads = cls._successful_read_ranges(retry_observations)
-        for read_path, read_start, read_end in later_reads:
-            for search_path, search_start, search_end in search_ranges:
-                overlap_start = max(read_start, search_start)
-                overlap_end = min(read_end, search_end)
-                if (
-                    read_path == search_path
-                    and overlap_start <= overlap_end
-                    and cls._first_unread_range(
-                        read_path,
-                        overlap_start,
-                        overlap_end,
-                        earlier_reads,
-                    )
-                    is not None
-                ):
-                    return True
-        return False
-
-    @classmethod
-    def _next_unread_search_result(
-        cls,
-        observations: Sequence[Observation],
-    ) -> ToolCall | None:
-        if not any(item.tool_name == "answer_validation" for item in observations):
-            return None
-
-        read_ranges = cls._successful_read_ranges(observations)
-        partially_unread_candidate: ToolCall | None = None
-        for observation in reversed(observations):
-            if (
-                observation.tool_name != "search_documents"
-                or observation.error
-                or not isinstance(observation.result, list)
-            ):
-                continue
-            for result in observation.result:
-                if not isinstance(result, dict):
-                    continue
-                path = result.get("path")
-                start = result.get("start_line")
-                end = result.get("end_line")
-                if (
-                    not isinstance(path, str)
-                    or not isinstance(start, int)
-                    or isinstance(start, bool)
-                    or not isinstance(end, int)
-                    or isinstance(end, bool)
-                    or start < 1
-                    or end < start
-                    or end - start + 1 > 40
-                ):
-                    continue
-                unread_range = cls._first_unread_range(path, start, end, read_ranges)
-                if unread_range is None:
-                    continue
-                candidate = ToolCall(
-                    "read_document",
-                    {
-                        "path": path,
-                        "start_line": unread_range[0],
-                        "end_line": unread_range[1],
-                    },
-                )
-                if unread_range == (start, end):
-                    return candidate
-                if partially_unread_candidate is None:
-                    partially_unread_candidate = candidate
-        return partially_unread_candidate
-
-    @classmethod
     def _ground_answer(
         cls,
         answer: str,
@@ -815,7 +633,7 @@ class ResearchAgent:
                     if not cls._claim_matches_lines(claim_tokens, evidence_by_citation[index]):
                         return None, cls._grounding_failure_detail(
                             claim,
-                            f"The cited lines did not match citation [{index + 1}].",
+                            f"The cited lines did not lexically match citation [{index + 1}].",
                         )
                     used_citations.add(index)
                 continue
@@ -828,7 +646,7 @@ class ResearchAgent:
             if not matching:
                 return None, cls._grounding_failure_detail(
                     claim,
-                    "No cited lines matched this claim.",
+                    "No cited lines matched this claim using the conservative phrase check.",
                 )
             used_citations.update(matching)
 
