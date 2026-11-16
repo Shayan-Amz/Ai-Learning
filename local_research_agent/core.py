@@ -824,7 +824,84 @@ class ResearchAgent:
 
         if not candidates:
             return None
-        return max(candidates, key=lambda item: item[0])[1]
+
+        best_answer = max(candidates, key=lambda item: item[0])[1]
+        if not best_answer.citations:
+            return best_answer
+        source_excerpt = cls._preceding_bullet_excerpt(
+            best_answer.citations[0],
+            observations,
+        )
+        if len(source_excerpt) <= 1:
+            return best_answer
+
+        excerpt_start = source_excerpt[0][0]
+        excerpt_end = source_excerpt[-1][0]
+        excerpt_citation = Citation(best_answer.citations[0].path, excerpt_start, excerpt_end)
+        quoted_lines: list[str] = []
+        for _, source_line in source_excerpt:
+            punctuation = source_line[-1] if source_line.endswith(terminal_marks) else ""
+            body = source_line[:-1].rstrip() if punctuation else source_line
+            quoted_lines.append(f"{body} [1]{punctuation}")
+        return FinalAnswer("\n".join(quoted_lines), (excerpt_citation,))
+
+    @staticmethod
+    def _preceding_bullet_excerpt(
+        citation: Citation,
+        observations: Sequence[Observation],
+    ) -> tuple[tuple[int, str], ...]:
+        """Include a nearby source bullet list with a matching sentence when available."""
+        for observation in observations:
+            if observation.tool_name != "read_document" or observation.error:
+                continue
+            result = observation.result
+            if not isinstance(result, dict) or result.get("path") != citation.path:
+                continue
+            start = result.get("start_line")
+            end = result.get("end_line")
+            content = result.get("content")
+            if (
+                not isinstance(start, int)
+                or isinstance(start, bool)
+                or not isinstance(end, int)
+                or isinstance(end, bool)
+                or not isinstance(content, str)
+                or citation.start_line < start
+                or citation.end_line > end
+            ):
+                continue
+
+            source_lines: dict[int, str] = {}
+            for numbered_line in content.splitlines():
+                match = re.match(r"^\s*(\d+):\s?(.*)$", numbered_line)
+                if match is not None:
+                    line_number = int(match.group(1))
+                    if start <= line_number <= end:
+                        source_lines[line_number] = match.group(2)
+            target_line = source_lines.get(citation.start_line)
+            if target_line is None or not target_line.strip():
+                continue
+
+            excerpt = [(citation.start_line, target_line.strip())]
+            blank_lines = 0
+            first_candidate = max(start, citation.start_line - 8)
+            for line_number in range(citation.start_line - 1, first_candidate - 1, -1):
+                source_line = source_lines.get(line_number)
+                if source_line is None:
+                    break
+                if not source_line.strip():
+                    blank_lines += 1
+                    if blank_lines > 1:
+                        break
+                    continue
+                if not re.match(r"^\s*(?:[-*•]\s+|\d+[.)]\s+)", source_line):
+                    break
+                excerpt.append((line_number, source_line.strip()))
+                blank_lines = 0
+
+            excerpt.reverse()
+            return tuple(excerpt)
+        return ()
 
     @staticmethod
     def _citation_evidence_lines(

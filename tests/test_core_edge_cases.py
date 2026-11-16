@@ -297,6 +297,17 @@ def test_duplicate_read_uses_exact_source_fallback_before_planner_loops():
     read_calls = 0
     path = "nanofluid.md"
     source_line = "**یادداشت گوینده:** DLVO پل ارتباطی بین شیمی آب شور، بار سطحی ذره و پایداری است."
+    source_content = "\n".join(
+        (
+            "180: - **V_total = V_vdW + V_EDL**",
+            "181: - **V_vdW:** جاذبه واندروالس (همیشه جاذبه بین ذرات یکسان)",
+            "182: - **V_EDL:** دافعه لایه دوگانه الکتریکی",
+            "183: - **منحنی انرژی:** کمینه اولیه (تجمع برگشت‌ناپذیر)، سد انرژی، کمینه ثانویه (لخته‌شدن ضعیف و برگشت‌پذیر)",
+            "184: - سد انرژی بسیار بلندتر از kT → سوسپانسیون پایدار",
+            "185: ",
+            f"186: {source_line}",
+        )
+    )
 
     def search(arguments: dict[str, object]) -> list[dict[str, object]]:
         nonlocal search_calls
@@ -310,7 +321,7 @@ def test_duplicate_read_uses_exact_source_fallback_before_planner_loops():
             "path": path,
             "start_line": 177,
             "end_line": 191,
-            "content": f"186: {source_line}",
+            "content": source_content,
         }
 
     class DuplicateReadPlanner:
@@ -335,11 +346,43 @@ def test_duplicate_read_uses_exact_source_fallback_before_planner_loops():
     assert search_calls == 1
     assert read_calls == 1
     assert source_line[:-1] in result.answer
-    assert result.citations == (Citation(path, 186, 186),)
+    assert "V_total = V_vdW + V_EDL" in result.answer
+    assert "دافعه لایه دوگانه الکتریکی" in result.answer
+    assert "سد انرژی بسیار بلندتر از kT" in result.answer
+    assert result.citations == (Citation(path, 180, 186),)
     assert result.observations[-1].error == (
         "This line range was already read. Use the existing evidence or choose a different "
         "unread range; do not repeat this read."
     )
+
+
+def test_extractive_fallback_keeps_single_sentence_without_adjacent_bullets():
+    path = "nanofluid.md"
+    source_line = "DLVO پل ارتباطی بین شیمی آب شور، بار سطحی ذره و پایداری است."
+    observations = (
+        Observation(
+            tool_name="search_documents",
+            result=[{"path": path, "start_line": 1, "end_line": 1}],
+        ),
+        Observation(
+            tool_name="read_document",
+            result={
+                "path": path,
+                "start_line": 1,
+                "end_line": 1,
+                "content": f"1: {source_line}",
+            },
+        ),
+    )
+
+    answer = ResearchAgent._extractive_fallback(
+        "According to the file, what role does DLVO play in nanofluid stability?",
+        observations,
+    )
+
+    assert answer is not None
+    assert answer.text == f"{source_line[:-1]} [1]."
+    assert answer.citations == (Citation(path, 1, 1),)
 
 
 def test_repeated_duplicate_reads_stop_safely_when_no_relevant_quote_exists():
@@ -477,7 +520,9 @@ def test_repeated_mixed_language_failure_falls_back_to_exact_relevant_source_lin
     assert search_calls == 2
     assert read_ranges == [(177, 191), (37, 42)]
     assert direct_quote in result.answer
-    assert result.citations == (Citation(path, 186, 186),)
+    assert "V_total = V_vdW + V_EDL" in result.answer
+    assert "سد انرژی بسیار بلندتر از kT" in result.answer
+    assert result.citations == (Citation(path, 180, 186),)
     assert result.observations[2].tool_name == "answer_validation"
     assert "colloid chemistry" in str(result.observations[2].result)
 
