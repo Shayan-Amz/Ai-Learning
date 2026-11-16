@@ -292,6 +292,113 @@ def test_agent_corrects_mixed_language_claim_from_already_read_source_text():
     assert "دینامیک لایه دوگانه الکتریکی واندروالس" in feedback.result
 
 
+def test_repeated_mixed_language_failure_falls_back_to_exact_relevant_source_line():
+    search_calls = 0
+    read_ranges: list[tuple[int, int]] = []
+    path = "nanofluid.md"
+    direct_quote = "**یادداشت گوینده:** DLVO پل ارتباطی بین شیمی آب شور، بار سطحی ذره و پایداری است"
+    lines = {
+        37: "",
+        38: "**محتوای اسلاید**",
+        39: "- A: چرا ازدیاد برداشت؟",
+        40: "- B: نانوسیال چیست؟",
+        41: "- C: پایداری (DLVO، طول دبای)",
+        42: "- D: سازوکارهای اثر",
+        177: "## اسلاید ۱۱: نظریه DLVO",
+        179: "**محتوای اسلاید**",
+        180: "- **V_total = V_vdW + V_EDL**",
+        181: "- **V_vdW:** جاذبه واندروالس",
+        182: "- **V_EDL:** دافعه لایه دوگانه الکتریکی",
+        183: "- **منحنی انرژی:** کمینه اولیه، سد انرژی و کمینه ثانویه",
+        184: "- سد انرژی بسیار بلندتر از kT → سوسپانسیون پایدار",
+        186: f"{direct_quote}.",
+        188: "**پیشنهاد تصویر:** نمودار انرژی در برابر فاصله.",
+    }
+
+    def search(arguments: dict[str, object]) -> list[dict[str, object]]:
+        nonlocal search_calls
+        search_calls += 1
+        return [
+            {"path": path, "start_line": 177, "end_line": 191, "snippet": "DLVO stability"},
+            {"path": path, "start_line": 37, "end_line": 42, "snippet": "DLVO outline"},
+        ]
+
+    def read(arguments: dict[str, object]) -> dict[str, object]:
+        start = int(arguments["start_line"])
+        end = int(arguments["end_line"])
+        read_ranges.append((start, end))
+        content = "\n".join(
+            f"{line_number}: {lines.get(line_number, '')}" for line_number in range(start, end + 1)
+        )
+        return {"path": path, "start_line": start, "end_line": end, "content": content}
+
+    bad_answer = FinalAnswer(
+        "According to the file, DLVO (دینامیک لایه دوگانه الکتریکی واندروالس) plays a role "
+        "in nanofluid stability as a theoretical framework linking colloid chemistry, surface "
+        "charge of particles, and stability [1].",
+        (Citation(path, 177, 191),),
+    )
+
+    class RepeatsAndMisreadsPlanner:
+        def choose_next_action(
+            self,
+            goal: str,
+            observations: Sequence[Observation],
+        ) -> Action:
+            feedback_index = next(
+                (
+                    index
+                    for index, item in enumerate(observations)
+                    if item.tool_name == "answer_validation"
+                ),
+                None,
+            )
+            if not observations:
+                return ToolCall("search_documents", {"query": goal})
+            if feedback_index is None:
+                successful_reads = [
+                    item
+                    for item in observations
+                    if item.tool_name == "read_document" and not item.error
+                ]
+                if not successful_reads:
+                    return ToolCall(
+                        "read_document",
+                        {"path": path, "start_line": 177, "end_line": 191},
+                    )
+                if observations[-1].tool_name == "read_document" and not observations[-1].error:
+                    return ToolCall(
+                        "read_document",
+                        {"path": path, "start_line": 177, "end_line": 191},
+                    )
+                return bad_answer
+
+            retry_observations = observations[feedback_index + 1 :]
+            if not any(item.tool_name == "search_documents" for item in retry_observations):
+                return ToolCall("search_documents", {"query": "DLVO پایداری"})
+            if not any(item.tool_name == "read_document" for item in retry_observations):
+                return ToolCall(
+                    "read_document",
+                    {"path": path, "start_line": 37, "end_line": 42},
+                )
+            return FinalAnswer(
+                "DLVO acts as a framework for stability [1].",
+                (Citation(path, 37, 42),),
+            )
+
+    result = ResearchAgent(
+        RepeatsAndMisreadsPlanner(),
+        ToolRegistry({"search_documents": search, "read_document": read}),
+    ).run("According to the file, what role does DLVO play in stability of nanofluids?")
+
+    assert result.stop_reason == "finished"
+    assert search_calls == 2
+    assert read_ranges == [(177, 191), (37, 42)]
+    assert direct_quote in result.answer
+    assert result.citations == (Citation(path, 186, 186),)
+    assert result.observations[2].error is not None
+
+
 def test_grounding_retry_reports_the_rejected_claim_and_never_repeats_a_read():
     search_calls = 0
     read_ranges: list[tuple[int, int]] = []
@@ -365,8 +472,8 @@ def test_grounding_retry_reports_the_rejected_claim_and_never_repeats_a_read():
         "read_document",
     ]
     assert result.observations[-1].error == (
-        "This line range was already read. Use the existing evidence or search once for a "
-        "different passage; do not repeat this read."
+        "This line range was already read. Use the existing evidence or choose a different "
+        "unread range; do not repeat this read."
     )
 
 

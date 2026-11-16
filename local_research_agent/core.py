@@ -322,6 +322,12 @@ class ResearchAgent:
                     observations.append(Observation(tool_name="answer_validation", result=feedback))
                     grounding_retry_used = True
                     continue
+                if result.stop_reason == "ungrounded_answer" and grounding_retry_used:
+                    extractive_fallback = self._extractive_fallback(goal, observations)
+                    if extractive_fallback is not None:
+                        fallback_result = self._finish(extractive_fallback, observations)
+                        if fallback_result.stop_reason == "finished":
+                            return fallback_result
                 return result
 
             if not isinstance(action, ToolCall):
@@ -340,7 +346,7 @@ class ResearchAgent:
                     citations=self._fallback_citations(observations),
                 )
 
-            if grounding_retry_used and action.name == "read_document":
+            if action.name == "read_document":
                 unread_action = self._read_call_for_unread_lines(action, observations)
                 if unread_action is None:
                     observations.append(
@@ -348,7 +354,7 @@ class ResearchAgent:
                             tool_name=action.name,
                             error=(
                                 "This line range was already read. Use the existing evidence or "
-                                "search once for a different passage; do not repeat this read."
+                                "choose a different unread range; do not repeat this read."
                             ),
                         )
                     )
@@ -673,6 +679,135 @@ class ResearchAgent:
         if not compact_claim:
             return reason
         return f"{reason} Rejected draft claim (not evidence): {compact_claim!r}."
+
+    @classmethod
+    def _extractive_fallback(
+        cls,
+        goal: str,
+        observations: Sequence[Observation],
+    ) -> FinalAnswer | None:
+        """Quote a relevant, sentence-like source line after model grounding fails twice."""
+        query_acronyms = {
+            token.casefold()
+            for token in re.findall(r"(?<![A-Za-z0-9])[A-Z][A-Z0-9]{1,}(?![A-Za-z0-9])", goal)
+        }
+        query_tokens = set(cls._grounding_tokens(goal))
+        if not query_acronyms and not query_tokens:
+            return None
+
+        search_ranges: list[tuple[int, str, int, int]] = []
+        for observation in observations:
+            if (
+                observation.tool_name != "search_documents"
+                or observation.error
+                or not isinstance(observation.result, list)
+            ):
+                continue
+            for rank, result in enumerate(observation.result):
+                if not isinstance(result, dict):
+                    continue
+                path = result.get("path")
+                start = result.get("start_line")
+                end = result.get("end_line")
+                if (
+                    isinstance(path, str)
+                    and isinstance(start, int)
+                    and not isinstance(start, bool)
+                    and isinstance(end, int)
+                    and not isinstance(end, bool)
+                    and start >= 1
+                    and end >= start
+                    and end - start + 1 <= 40
+                ):
+                    search_ranges.append((rank, path, start, end))
+
+        candidates: list[tuple[tuple[int, int, int, int, int], FinalAnswer]] = []
+        terminal_marks = (".", "!", "?", "۔", "؟")
+        for observation in observations:
+            if observation.tool_name != "read_document" or observation.error:
+                continue
+            result = observation.result
+            if not isinstance(result, dict):
+                continue
+            path = result.get("path")
+            start = result.get("start_line")
+            end = result.get("end_line")
+            content = result.get("content")
+            if (
+                not isinstance(path, str)
+                or not isinstance(start, int)
+                or isinstance(start, bool)
+                or not isinstance(end, int)
+                or isinstance(end, bool)
+                or not isinstance(content, str)
+            ):
+                continue
+
+            for numbered_line in content.splitlines():
+                match = re.match(r"^\s*(\d+):\s?(.*)$", numbered_line)
+                if match is None:
+                    continue
+                line_number = int(match.group(1))
+                source_line = match.group(2).strip()
+                if not source_line or not start <= line_number <= end:
+                    continue
+                if (
+                    re.match(r"^\s*(?:#{1,6}\s|\|)", source_line)
+                    or re.match(r"^\s*(?:slide\s+)?title\s*:", source_line, re.IGNORECASE)
+                    or any(
+                        marker in source_line.casefold()
+                        for marker in (
+                            "suggested image",
+                            "image suggestion",
+                            "پیشنهاد تصویر",
+                            "glossary",
+                            "واژه‌نامه",
+                        )
+                    )
+                    or not source_line.endswith(terminal_marks)
+                ):
+                    continue
+
+                result_acronyms = {
+                    token.casefold()
+                    for token in re.findall(
+                        r"(?<![A-Za-z0-9])[A-Z][A-Z0-9]{1,}(?![A-Za-z0-9])",
+                        source_line,
+                    )
+                }
+                matched_acronyms = query_acronyms.intersection(result_acronyms)
+                token_overlap = query_tokens.intersection(cls._grounding_tokens(source_line))
+                if not matched_acronyms and len(token_overlap) < 2:
+                    continue
+
+                matching_ranks = [
+                    rank
+                    for rank, search_path, search_start, search_end in search_ranges
+                    if search_path == path and search_start <= line_number <= search_end
+                ]
+                if not matching_ranks:
+                    continue
+
+                punctuation = source_line[-1] if source_line.endswith(terminal_marks) else "."
+                body = (
+                    source_line[:-1].rstrip()
+                    if source_line.endswith(terminal_marks)
+                    else source_line
+                )
+                citation = Citation(path, line_number, line_number)
+                answer = FinalAnswer(f"{body} [1]{punctuation}", (citation,))
+                score = (
+                    len(matched_acronyms),
+                    len(token_overlap),
+                    1,
+                    -min(matching_ranks),
+                    len(source_line),
+                )
+                candidates.append((score, answer))
+
+        if not candidates:
+            return None
+        return max(candidates, key=lambda item: item[0])[1]
 
     @staticmethod
     def _citation_evidence_lines(
