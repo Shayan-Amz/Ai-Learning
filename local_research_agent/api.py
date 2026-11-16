@@ -477,7 +477,13 @@ def _trace_items(result: AgentResult) -> list[TraceItem]:
     for observation in result.observations:
         if observation.error:
             detail = observation.error
-            blocked_terms = ("not registered", "escapes", "must be returned", "must search")
+            blocked_terms = (
+                "not registered",
+                "escapes",
+                "must be returned",
+                "must search",
+                "already read",
+            )
             state = "blocked" if any(term in detail.casefold() for term in blocked_terms) else "error"
         elif observation.tool_name == "answer_validation":
             detail = (

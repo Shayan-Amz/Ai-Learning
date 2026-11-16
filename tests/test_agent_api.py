@@ -5,8 +5,9 @@ from pathlib import Path
 import httpx
 from fastapi.testclient import TestClient
 
-from local_research_agent.api import create_app
+from local_research_agent.api import _trace_items, create_app
 from local_research_agent.config import Settings
+from local_research_agent.core import AgentResult, Observation
 
 UI_HEADERS = {"X-Requested-With": "LocalResearchAgent"}
 
@@ -14,6 +15,24 @@ UI_HEADERS = {"X-Requested-With": "LocalResearchAgent"}
 def make_client(tmp_path: Path, settings: Settings | None = None) -> TestClient:
     app_settings = settings or Settings(data_dir=tmp_path / "agent-data")
     return TestClient(create_app(app_settings, seed_samples=False))
+
+
+def test_trace_marks_duplicate_read_rejection_as_blocked():
+    result = AgentResult(
+        answer="Stopped safely.",
+        observations=(
+            Observation(
+                tool_name="read_document",
+                error="This line range was already read. Do not repeat this read.",
+            ),
+        ),
+        stop_reason="repeated_read",
+    )
+
+    trace = _trace_items(result)
+
+    assert trace[0].status == "blocked"
+    assert "already read" in trace[0].detail
 
 
 def test_home_and_health_expose_local_app_without_private_paths(tmp_path: Path):

@@ -292,6 +292,93 @@ def test_agent_corrects_mixed_language_claim_from_already_read_source_text():
     assert "دینامیک لایه دوگانه الکتریکی واندروالس" in feedback.result
 
 
+def test_duplicate_read_uses_exact_source_fallback_before_planner_loops():
+    search_calls = 0
+    read_calls = 0
+    path = "nanofluid.md"
+    source_line = "**یادداشت گوینده:** DLVO پل ارتباطی بین شیمی آب شور، بار سطحی ذره و پایداری است."
+
+    def search(arguments: dict[str, object]) -> list[dict[str, object]]:
+        nonlocal search_calls
+        search_calls += 1
+        return [{"path": path, "start_line": 177, "end_line": 191}]
+
+    def read(arguments: dict[str, object]) -> dict[str, object]:
+        nonlocal read_calls
+        read_calls += 1
+        return {
+            "path": path,
+            "start_line": 177,
+            "end_line": 191,
+            "content": f"186: {source_line}",
+        }
+
+    class DuplicateReadPlanner:
+        def choose_next_action(
+            self,
+            goal: str,
+            observations: Sequence[Observation],
+        ) -> Action:
+            if not observations:
+                return ToolCall("search_documents", {"query": goal})
+            return ToolCall(
+                "read_document",
+                {"path": path, "start_line": 177, "end_line": 191},
+            )
+
+    result = ResearchAgent(
+        DuplicateReadPlanner(),
+        ToolRegistry({"search_documents": search, "read_document": read}),
+    ).run("According to the file, what role does DLVO play in stability of nanofluids?")
+
+    assert result.stop_reason == "finished"
+    assert search_calls == 1
+    assert read_calls == 1
+    assert source_line[:-1] in result.answer
+    assert result.citations == (Citation(path, 186, 186),)
+    assert result.observations[-1].error == (
+        "This line range was already read. Use the existing evidence or choose a different "
+        "unread range; do not repeat this read."
+    )
+
+
+def test_repeated_duplicate_reads_stop_safely_when_no_relevant_quote_exists():
+    search_calls = 0
+    read_calls = 0
+    path = "notes.md"
+
+    def search(arguments: dict[str, object]) -> list[dict[str, object]]:
+        nonlocal search_calls
+        search_calls += 1
+        return [{"path": path, "start_line": 1, "end_line": 1}]
+
+    def read(arguments: dict[str, object]) -> dict[str, object]:
+        nonlocal read_calls
+        read_calls += 1
+        return {"path": path, "start_line": 1, "end_line": 1, "content": "1: General note."}
+
+    class EndlessReader:
+        def choose_next_action(
+            self,
+            goal: str,
+            observations: Sequence[Observation],
+        ) -> Action:
+            if not observations:
+                return ToolCall("search_documents", {"query": goal})
+            return ToolCall("read_document", {"path": path, "start_line": 1, "end_line": 1})
+
+    result = ResearchAgent(
+        EndlessReader(),
+        ToolRegistry({"search_documents": search, "read_document": read}),
+    ).run("What is in this note?")
+
+    assert result.stop_reason == "repeated_read"
+    assert "repeatedly requested an already-read" in result.answer
+    assert search_calls == 1
+    assert read_calls == 1
+    assert sum(item.error is not None for item in result.observations) == 2
+
+
 def test_repeated_mixed_language_failure_falls_back_to_exact_relevant_source_line():
     search_calls = 0
     read_ranges: list[tuple[int, int]] = []
@@ -366,11 +453,6 @@ def test_repeated_mixed_language_failure_falls_back_to_exact_relevant_source_lin
                         "read_document",
                         {"path": path, "start_line": 177, "end_line": 191},
                     )
-                if observations[-1].tool_name == "read_document" and not observations[-1].error:
-                    return ToolCall(
-                        "read_document",
-                        {"path": path, "start_line": 177, "end_line": 191},
-                    )
                 return bad_answer
 
             retry_observations = observations[feedback_index + 1 :]
@@ -396,7 +478,8 @@ def test_repeated_mixed_language_failure_falls_back_to_exact_relevant_source_lin
     assert read_ranges == [(177, 191), (37, 42)]
     assert direct_quote in result.answer
     assert result.citations == (Citation(path, 186, 186),)
-    assert result.observations[2].error is not None
+    assert result.observations[2].tool_name == "answer_validation"
+    assert "colloid chemistry" in str(result.observations[2].result)
 
 
 def test_grounding_retry_reports_the_rejected_claim_and_never_repeats_a_read():

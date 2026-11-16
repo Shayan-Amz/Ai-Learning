@@ -281,6 +281,7 @@ class ResearchAgent:
         observations: list[Observation] = []
         grounding_retry_used = False
         grounding_retry_search_attempted = False
+        duplicate_read_rejections = 0
         for _ in range(self._max_steps + 2):
             try:
                 action = self._planner.choose_next_action(goal, tuple(observations))
@@ -358,8 +359,24 @@ class ResearchAgent:
                             ),
                         )
                     )
+                    duplicate_read_rejections += 1
+                    extractive_fallback = self._extractive_fallback(goal, observations)
+                    if extractive_fallback is not None:
+                        fallback_result = self._finish(extractive_fallback, observations)
+                        if fallback_result.stop_reason == "finished":
+                            return fallback_result
+                    if duplicate_read_rejections >= 2:
+                        return AgentResult(
+                            answer=(
+                                "Stopped safely: the planner repeatedly requested an already-read "
+                                "line range. No unsupported answer was produced."
+                            ),
+                            observations=tuple(observations),
+                            stop_reason="repeated_read",
+                        )
                     continue
                 action = unread_action
+                duplicate_read_rejections = 0
 
             if grounding_retry_used and action.name == "search_documents":
                 if grounding_retry_search_attempted:
